@@ -7,25 +7,38 @@ from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.schemas import (
+    ActionRequired,
     CallHistoryItem,
     CallHistoryList,
     CallRequest,
     CallResponse,
+    HotlineRequest,
+    Intent,
+    Priority,
+    RoutingRuleIn,
+    ScenarioIn,
     SynthesizeRequest,
     SynthesizeResponse,
     TranscribeResponse,
     VoiceCallResponse,
 )
+from backend.services.analytics import build_call_stats
 from backend.services.call_agent import process_incoming_call
 from backend.services.call_history import call_log_to_item, get_call_log, list_call_logs, save_call_log
+from backend.services.routing_rules import delete_rule, list_rules, upsert_rule
+from backend.services.scenarios import delete_scenario, list_scenarios, upsert_scenario
 from backend.services.speech_providers import SpeechError, synthesize_agent_audio, transcribe_bytes
 from backend.services.speechkit_stt import guess_audio_format
+from backend.services.telegram_notify import notify_ivan_if_needed
 from backend.services.tts_storage import (
     audio_url_for_call,
     ensure_tts_dir,
     find_call_audio,
     save_call_audio,
 )
+from backend.services.yandex_llm import ensure_ai_disclosure
+from backend.config import get_settings
+
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
 
@@ -61,6 +74,8 @@ async def process_call(
         response = await process_incoming_call(data)
         row = save_call_log(db, data, response)
         response.call_id = row.id
+        if get_settings().notify_on_critical:
+            await notify_ivan_if_needed(response, caller_phone=data.client_phone)
         if with_audio:
             response = await _attach_agent_tts(response)
         return response
@@ -162,6 +177,8 @@ async def process_call_voice(
         response = await process_incoming_call(data)
         row = save_call_log(db, data, response)
         response.call_id = row.id
+        if get_settings().notify_on_critical:
+            await notify_ivan_if_needed(response, caller_phone=data.client_phone)
         if with_audio:
             response = await _attach_agent_tts(response)
     except Exception as exc:  # noqa: BLE001
@@ -206,3 +223,91 @@ def get_call_audio(call_id: int, db: Session = Depends(get_db)) -> FileResponse:
         )
     media = "audio/wav" if path.suffix.lower() == ".wav" else "audio/ogg"
     return FileResponse(path, media_type=media, filename=path.name)
+
+
+@router.get("/stats")
+def get_stats(
+    limit: int = Query(500, ge=1, le=2000),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Аналитика по звонкам (ТЗ: усиление ценности)."""
+    return build_call_stats(db, limit=limit)
+
+
+@router.get("/routing_rules")
+def get_routing_rules() -> dict:
+    """Правила маршрутизации (ТЗ: контроль)."""
+    return {"items": list_rules(), "total": len(list_rules())}
+
+
+@router.put("/routing_rules")
+def put_routing_rule(body: RoutingRuleIn) -> dict:
+    return upsert_rule(body.model_dump())
+
+
+@router.delete("/routing_rules/{rule_id}")
+def remove_routing_rule(rule_id: str) -> dict:
+    ok = delete_rule(rule_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
+    return {"deleted": True, "id": rule_id}
+
+
+@router.get("/scenarios")
+def get_scenarios() -> dict:
+    """Сценарии приветствия / FAQ (ТЗ: редактирование сценариев)."""
+    return {"items": list_scenarios(), "total": len(list_scenarios())}
+
+
+@router.put("/scenarios")
+def put_scenario(body: ScenarioIn) -> dict:
+    return upsert_scenario(body.model_dump())
+
+
+@router.delete("/scenarios/{scenario_id}")
+def remove_scenario(scenario_id: str) -> dict:
+    ok = delete_scenario(scenario_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Scenario {scenario_id} not found")
+    return {"deleted": True, "id": scenario_id}
+
+
+@router.post("/hotline", response_model=CallResponse)
+async def hotline_transfer(
+    body: HotlineRequest,
+    db: Session = Depends(get_db),
+) -> CallResponse:
+    """
+    Горячая линия: принудительный перевод на человека (ТЗ: экстренный перевод).
+    Без LLM — мгновенно для демо.
+    """
+    settings = get_settings()
+    text = ensure_ai_disclosure(
+        "Соединяю вас с Иваном. Пожалуйста, оставайтесь на линии."
+    )
+    response = CallResponse(
+        agent_response=text,
+        is_critical=True,
+        priority=Priority.critical,
+        intent=Intent.escalation,
+        action_required=ActionRequired.transfer_to_human,
+        summary=(
+            f"Горячая линия: звонящий запросил человека. "
+            f"Тел: {body.client_phone or 'unknown'}. Текст: {body.user_message[:200]}"
+        ),
+        caller_name=None,
+        recommended_next_step="Принять звонок / перезвонить немедленно",
+        session_id=body.session_id,
+        model="hotline-rule",
+    )
+    data = CallRequest(
+        session_id=body.session_id,
+        user_message=body.user_message,
+        client_phone=body.client_phone or "unknown",
+    )
+    row = save_call_log(db, data, response)
+    response.call_id = row.id
+    if settings.notify_on_critical:
+        await notify_ivan_if_needed(response, caller_phone=body.client_phone)
+    return response
+

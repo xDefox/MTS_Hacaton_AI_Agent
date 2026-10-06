@@ -158,3 +158,33 @@ class VoiceCallResponse(CallResponse):
 
     transcript: str = Field(..., description="Распознанный текст")
     stt_engine: str = "faster-whisper"
+
+
+class RoutingRuleIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    is_critical: Optional[bool] = None
+    intent: Optional[str] = None
+    action_required: Optional[str] = None
+    enabled: bool = True
+
+
+class ScenarioIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    kind: str = "custom"  # greeting | faq | custom
+    text: str
+    enabled: bool = True
+
+
+class HotlineRequest(BaseModel):
+    """Экстренный перевод на человека (ТЗ: усиление / горячая линия)."""
+
+    session_id: str
+    user_message: str = Field(
+        default="Просьба соединить с человеком",
+        min_length=1,
+    )
+    client_phone: Optional[str] = "unknown"

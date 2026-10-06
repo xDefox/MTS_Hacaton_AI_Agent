@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     # Local SQLite for call history (ТЗ: контроль). Not for production PDn.
     database_url: str = f"sqlite:///{DEFAULT_DB_PATH.as_posix()}"
 
+    # CJM: уведомления Ивану (опционально; без токена — только data/notifications.jsonl)
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    notify_on_critical: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:
