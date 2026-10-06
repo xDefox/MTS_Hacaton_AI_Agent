@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     owner_name: str = "Иван Петров"
 
     tg_bot_token: str = ""
+
+    # SpeechKit TTS voice for agent replies (demo)
+    tts_voice: str = "alena"
+    tts_lang: str = "ru-RU"
+
     # Local SQLite for call history (ТЗ: контроль). Not for production PDn.
     database_url: str = f"sqlite:///{DEFAULT_DB_PATH.as_posix()}"
 

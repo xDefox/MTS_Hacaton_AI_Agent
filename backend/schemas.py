@@ -92,6 +92,32 @@ class CallResponse(BaseModel):
         default=None,
         description="ID записи в истории звонков (SQLite)",
     )
+    audio_url: Optional[str] = Field(
+        default=None,
+        description="URL озвучки agent_response (демо TTS → data/tts/). В проде — стрим в трубку.",
+    )
+    tts_engine: Optional[str] = Field(
+        default=None,
+        description="Движок озвучки, если with_audio=true",
+    )
+
+
+class SynthesizeRequest(BaseModel):
+    """Текст → речь (SpeechKit TTS)."""
+
+    text: str = Field(..., min_length=1, max_length=5000)
+    voice: Optional[str] = Field(default=None, description="Голос SpeechKit, по умолчанию из настроек")
+    lang: str = "ru-RU"
+
+
+class SynthesizeResponse(BaseModel):
+    text: str
+    audio_url: Optional[str] = None
+    filename: str
+    engine: str = "yandex-speechkit"
+    note: str = (
+        "Демо: файл в data/tts/. По ТЗ в проде TTS стримится звонящему, без долгого хранения."
+    )
 
 
 class CallHistoryItem(BaseModel):
