@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from app.config import get_settings
+from backend.config import get_settings
 
 
 class Base(DeclarativeBase):
@@ -34,7 +34,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 def init_db() -> None:
     """Create tables if missing. Safe to call on startup."""
-    from app import models  # noqa: F401 — register models on Base.metadata
+    from backend import models  # noqa: F401 — register models on Base.metadata
 
     Base.metadata.create_all(bind=engine)
 

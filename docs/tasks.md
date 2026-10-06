@@ -1,7 +1,7 @@
 # AI Call Agent — рабочий roadmap (MTS Hackathon × Space)
 
 > Источники: `docs/Лекции_ТЗ_МТС.pdf` (ТЗ), `docs/CJM_Хакатон.docx.pdf` (CJM).  
-> Ветка бэка: `feature/backend`. Структура кода: **`app/`** (не `backend/`).
+> Ветка бэка: `feature/backend`. Структура кода: **`backend/`** (пакет FastAPI Трека 1).
 
 **Статус чекпоинта 1 (бэк + ИИ):** ✅ сдан  
 YandexGPT подключён, системный промпт Ивана, smoke-тесты 3 сценариев проходят (`model: yandexgpt:rc`).
@@ -57,7 +57,7 @@ YandexGPT подключён, системный промпт Ивана, smoke-
 ```
 MTS_Hacaton_AI_Agent/
 │
-├── app/
+├── backend/
 │   ├── main.py                 # ✅ FastAPI + CORS + /health + init_db
 │   ├── config.py               # ✅ YC_* + DATABASE_URL
 │   ├── database.py             # ✅ SQLAlchemy / SQLite
@@ -83,9 +83,9 @@ MTS_Hacaton_AI_Agent/
 
 ## 4. Этап 1 — Контракты и схемы — ✅ ГОТОВО
 
-Файлы: [`app/schemas.py`](../app/schemas.py), [`app/api/routes_call.py`](../app/api/routes_call.py)
+Файлы: [`backend/schemas.py`](../backend/schemas.py), [`backend/api/routes_call.py`](../backend/api/routes_call.py)
 
-- [x] Модели вынесены в `app/schemas.py`
+- [x] Модели вынесены в `backend/schemas.py`
 - [x] Запрос: `session_id`, `user_message`, `client_phone`, опц. `dialog_history`
 - [x] Ответ: `agent_response`, `is_critical`, `priority`, `intent`, `action_required`, `summary`, `caller_name`, `recommended_next_step`, `session_id`, `model`, `call_id`
 - [x] `CallHistoryItem` / `CallHistoryList` для истории
@@ -105,7 +105,7 @@ MTS_Hacaton_AI_Agent/
 
 ## 5. Этап 2 — Интеграция с LLM — ✅ ГОТОВО (чекпоинт 1)
 
-Файлы: [`app/services/yandex_llm.py`](../app/services/yandex_llm.py), [`app/prompts/system_ivan.py`](../app/prompts/system_ivan.py)
+Файлы: [`backend/services/yandex_llm.py`](../backend/services/yandex_llm.py), [`backend/prompts/system_ivan.py`](../backend/prompts/system_ivan.py)
 
 - [x] Обёртка YandexGPT (AI Studio SDK), retries, structured JSON
 - [ ] SpeechKit STT/TTS — следующий этап (голос)
@@ -171,7 +171,7 @@ MTS_Hacaton_AI_Agent/
 Запуск бэка для фронта:
 ```powershell
 .\.venv\Scripts\activate
-uvicorn app.main:app --reload --port 8000
+uvicorn backend.main:app --reload --port 8000
 # Swagger: http://127.0.0.1:8000/docs
 ```
 
@@ -202,7 +202,7 @@ uvicorn app.main:app --reload --port 8000
 | # | Задача | Статус |
 |---|---|---|
 | 1 | Схемы/контракты API | ✅ |
-| 2 | Структура `app/` (config, services, routes) | ✅ |
+| 2 | Структура `backend/` (config, services, routes) | ✅ |
 | 3 | Бизнес-логика важности + маршрутизация (через LLM) | ✅ |
 | 4 | YandexGPT + промпт Ивана + smoke | ✅ чекпоинт 1 |
 | 5 | SQLite + история звонков | ✅ |

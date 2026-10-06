@@ -41,7 +41,7 @@ copy .env.example .env
 5. Запуск API:
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 6. Swagger: http://127.0.0.1:8000/docs  
@@ -65,7 +65,7 @@ python scripts/smoke_history.py
 ## Структура
 
 ```
-app/
+backend/
   main.py                 # FastAPI entry + init_db
   config.py               # env + DATABASE_URL
   database.py             # SQLAlchemy engine
