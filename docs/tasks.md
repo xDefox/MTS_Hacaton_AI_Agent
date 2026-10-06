@@ -1,6 +1,6 @@
 # AI Call Agent — Track 1
 
-> Ветка разработки бэка: `feature/backend`. В `main`: `backend/` + `frontend/`.
+> Ветка бэка: `feature/backend` (только `backend/`). В `main`: `backend/` + `frontend/`. Без `.env.example` в репозитории.
 
 ## Сделано
 
@@ -11,7 +11,7 @@
 - [x] `GET /api/v1/calls`, `?critical_only=true`, `GET /api/v1/calls/{id}`
 - [x] Сохранение после каждого `process_call` → `call_id`
 - [x] Smoke-тесты: `backend/scripts/smoke_*.py`
-- [x] Структура: бэк в `backend/`, фронт в `frontend/`
+- [x] Структура: бэк в `backend/` (фронт только в `main`)
 
 ## ТЗ → продукт
 

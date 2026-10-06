@@ -34,10 +34,9 @@ python -m venv .venv
 # Windows:
 .venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env
 ```
 
-4. В `.env` укажите `YC_FOLDER_ID` и `YC_API_KEY`.
+4. Создайте `.env` в корне (файл не в git) и укажите `YC_FOLDER_ID` и `YC_API_KEY`.
 5. Запуск API:
 
 ```bash
@@ -46,14 +45,6 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 6. Swagger: http://127.0.0.1:8000/docs  
 7. Health: http://127.0.0.1:8000/health  
-
-### Frontend (Flet)
-
-Код партнёра в `frontend/` (не меняем с бэкенда). Запуск UI:
-
-```bash
-python frontend/app.py
-```
 
 ### Smoke-тесты
 
@@ -85,10 +76,11 @@ backend/                  # весь бэкенд Трека 1
   services/call_history.py
   scripts/smoke_test.py
   scripts/smoke_history.py
-frontend/                 # Flet / Telegram (партнёр)
 data/calls.db             # локально, не в git
 docs/                     # ТЗ, CJM, tasks.md
 ```
+
+Ветка `feature/backend` — только бэкенд. Фронт (`frontend/`) живёт в `main`, его отсюда не трогаем.
 
 ## Данные и безопасность (прототип)
 

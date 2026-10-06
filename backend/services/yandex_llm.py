@@ -84,7 +84,7 @@ def _run_yandex_sync(messages: list[dict[str, str]], settings: Settings) -> str:
 
     if not settings.yc_folder_id or not settings.yc_api_key:
         raise YandexLLMError(
-            "YC_FOLDER_ID and YC_API_KEY must be set in .env (see .env.example)."
+            "YC_FOLDER_ID and YC_API_KEY must be set in .env."
         )
 
     sdk = AIStudio(folder_id=settings.yc_folder_id, auth=settings.yc_api_key)
