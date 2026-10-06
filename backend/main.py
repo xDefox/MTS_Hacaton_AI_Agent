@@ -16,9 +16,9 @@ app = FastAPI(
     title="MTS AI Agent API",
     description=(
         "Трек 1: ИИ-агент входящих звонков для Ивана. "
-        "YandexGPT + резюме; SQLite-история для контроля (ТЗ)."
+        "SpeechKit STT + YandexGPT + SQLite-история (ТЗ)."
     ),
-    version="1.1.0",
+    version="1.2.0",
 )
 
 app.add_middleware(
@@ -45,6 +45,7 @@ def health_check():
         "status": "ok",
         "message": "API is running",
         "yandex_configured": bool(settings.yc_folder_id and settings.yc_api_key),
+        "speechkit": "stt+tts via same YC credentials",
         "model": f"{settings.yandex_model}:{settings.yandex_model_version}",
         "database": db_hint,
     }

@@ -11,6 +11,7 @@
 - [x] `GET /api/v1/calls`, `?critical_only=true`, `GET /api/v1/calls/{id}`
 - [x] Сохранение после каждого `process_call` → `call_id`
 - [x] Smoke-тесты: `backend/scripts/smoke_*.py`
+- [x] SpeechKit STT: `POST /api/v1/transcribe`, голос→агент `POST /api/v1/process_call_voice`
 - [x] Структура: бэк в `backend/` (фронт только в `main`)
 
 ## ТЗ → продукт
@@ -18,15 +19,14 @@
 | Требование ТЗ / CJM | Статус |
 |---|---|
 | ИИ принимает входящие за Ивана | есть (текст → агент) |
-| Суть обращения / резюме | `summary` + `user_message` |
-| Важное vs рутина | `is_critical`, фильтр `critical_only` |
+| Точность расшифровки / суть | SpeechKit STT + `summary` |
 | Контроль: история звонков | SQLite + API |
 | Маршрутизация голос / чат / человек | промпт + `action_required` |
 | Уведомление о записи разговора | в системном промпте |
 | Безопасность прототипа | локальная БД, `.gitignore`, ключи в `.env` |
 | Онбординг ≤ 5 мин / UI сценариев | ещё нет (фронт) |
 | Telegram-уведомление Ивану | ещё нет |
-| SpeechKit голос | ещё нет |
+| SpeechKit голос (полный Realtime) | STT sync есть; Realtime/TTS в ответе — дальше |
 
 ## Безопасность БД (хакатон)
 
@@ -42,6 +42,7 @@ uvicorn backend.main:app --reload --port 8000
 
 python backend/scripts/smoke_test.py
 python backend/scripts/smoke_history.py
+python backend/scripts/smoke_voice.py
 ```
 
 ## Дальше

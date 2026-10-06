@@ -2,7 +2,7 @@
 
 ИИ-агент входящих звонков для IT-предпринимателя **Ивана Петрова**.
 
-Стек: **Python + FastAPI + YandexGPT (AI Studio) + SQLite** + системный промпт по CJM/ТЗ.
+Стек: **Python + FastAPI + YandexGPT + SpeechKit STT + SQLite** + системный промпт по CJM/ТЗ.
 
 ## Что умеет сейчас
 
@@ -51,7 +51,15 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```bash
 python backend/scripts/smoke_test.py
 python backend/scripts/smoke_history.py
+python backend/scripts/smoke_voice.py
 ```
+
+### Голос (SpeechKit)
+
+- `POST /api/v1/transcribe` — аудио → текст  
+- `POST /api/v1/process_call_voice` — аудио → STT → агент → история  
+
+В Swagger загрузите `.ogg` (OggOpus). Без микрофона: `smoke_voice.py` сам синтезирует фразу через TTS и прогоняет цепочку.
 
 ### Пример запроса
 
@@ -74,8 +82,10 @@ backend/                  # весь бэкенд Трека 1
   prompts/system_ivan.py
   services/yandex_llm.py
   services/call_history.py
+  services/speechkit_stt.py  # STT (+ TTS для smoke)
   scripts/smoke_test.py
   scripts/smoke_history.py
+  scripts/smoke_voice.py
 data/calls.db             # локально, не в git
 docs/                     # ТЗ, CJM, tasks.md
 ```
@@ -95,5 +105,5 @@ Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`.
 ## Дальше по ТЗ
 
 - Telegram-уведомление Ивану (резюме + расшифровка)
-- SpeechKit STT/TTS
+- SpeechKit Realtime / ответ агента голосом (TTS в телефонию)
 - UI: дашборд истории, сценарии / правила маршрутизации

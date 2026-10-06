@@ -116,3 +116,19 @@ class CallHistoryItem(BaseModel):
 class CallHistoryList(BaseModel):
     items: list[CallHistoryItem]
     total: int
+
+
+class TranscribeResponse(BaseModel):
+    """Результат SpeechKit STT."""
+
+    transcript: str
+    lang: str = "ru-RU"
+    audio_format: str = "oggopus"
+    engine: str = "yandex-speechkit"
+
+
+class VoiceCallResponse(CallResponse):
+    """Голос → STT → агент + история."""
+
+    transcript: str = Field(..., description="Распознанный текст (SpeechKit)")
+    stt_engine: str = "yandex-speechkit"
