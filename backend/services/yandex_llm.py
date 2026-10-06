@@ -21,9 +21,26 @@ from backend.schemas import (
 
 logger = logging.getLogger(__name__)
 
+# ТЗ / комплаенс: всегда до ответа (текст и голос/TTS)
+AI_DISCLOSURE_PREFIX = (
+    "Внимание: вы общаетесь с искусственным интеллектом. "
+    "Разговор может записываться для передачи информации владельцу. "
+)
+
 
 class YandexLLMError(RuntimeError):
     """Raised when the model call or JSON parsing fails after retries."""
+
+
+def ensure_ai_disclosure(agent_response: str) -> str:
+    """Гарантированно ставит предупреждение перед ответом (и для TTS)."""
+    text = (agent_response or "").strip()
+    marker = "вы общаетесь с искусственным интеллектом"
+    if marker in text.lower():
+        return text
+    if not text:
+        return AI_DISCLOSURE_PREFIX.strip()
+    return f"{AI_DISCLOSURE_PREFIX}{text}"
 
 
 def _build_messages(request: CallRequest, system_prompt: str) -> list[dict[str, str]]:
@@ -119,18 +136,14 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
     )
 
     if wants_human:
-        agent_response = (
-            "Понял вас. Соединяю с менеджером. "
-            "Разговор может записываться для передачи информации владельцу."
-        )
+        agent_response = "Понял вас. Соединяю с менеджером."
         action = ActionRequired.transfer_to_human
         intent = Intent.escalation
         summary = "Звонящий запросил соединение с человеком. Требуется срочная эскалация."
         next_step = "Принять звонок / перезвонить немедленно"
     elif is_critical:
         agent_response = (
-            "Понимаю важность вопроса. Зафиксировал обращение и передам владельцу для быстрого перезвона. "
-            "Разговор может записываться для передачи информации владельцу."
+            "Понимаю важность вопроса. Зафиксировал обращение и передам владельцу для быстрого перезвона."
         )
         action = ActionRequired.callback_recommended
         intent = Intent.support_request
@@ -138,8 +151,7 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
         next_step = "Перезвонить сегодня"
     else:
         agent_response = (
-            "Здравствуйте! Я ИИ-помощник компании. Разговор может записываться "
-            "для передачи информации владельцу. Расскажите, пожалуйста, по какому вопросу звоните?"
+            "Здравствуйте! Я помощник компании. Расскажите, пожалуйста, по какому вопросу звоните?"
         )
         action = ActionRequired.continue_dialog
         intent = Intent.other
@@ -147,7 +159,7 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
         next_step = "Просмотреть резюме в Telegram"
 
     return CallResponse(
-        agent_response=agent_response,
+        agent_response=ensure_ai_disclosure(agent_response),
         is_critical=is_critical,
         priority=Priority.critical if wants_human else (Priority.high if is_critical else Priority.normal),
         intent=intent,
@@ -196,7 +208,7 @@ async def process_call_with_yandex(
             parsed = _parse_output(raw)
             caller_name = parsed.caller_name.strip() or None
             return CallResponse(
-                agent_response=parsed.agent_response,
+                agent_response=ensure_ai_disclosure(parsed.agent_response),
                 is_critical=parsed.is_critical,
                 priority=parsed.priority,
                 intent=parsed.intent,
