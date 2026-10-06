@@ -10,9 +10,11 @@ import flet as ft
 
 from frontend.app import main as build_page
 from frontend.assests import (
+    CATALOG_TITLE,
+    EXTRA_SERVICE_NAME,
     HEADER_CONNECT_SUBTITLE,
+    LOGIN_TITLE,
     SERVICE_NAME,
-    TELEGRAM_BOT_URL,
     TELEGRAM_OPEN_TEXT,
 )
 
@@ -41,8 +43,18 @@ class _MockPage:
         self.added.extend(controls)
 
     def show_dialog(self, dialog):
-        self.shown.append(dialog)
+        if dialog in self.shown and dialog.open:
+            raise RuntimeError("Dialog is already opened")
+        if dialog not in self.shown:
+            self.shown.append(dialog)
         dialog.open = True
+
+    def pop_dialog(self):
+        if self.shown:
+            dialog = self.shown[-1]
+            dialog.open = False
+            return dialog
+        return None
 
     def launch_url(self, url):
         self.launched.append(url)
@@ -57,11 +69,18 @@ def _page() -> _MockPage:
     return page
 
 
+def _enter_mts(page, phone="+7 900 111-22-33"):
+    ui = page.ui
+    ui["phone_field"].value = phone
+    ui["login_btn"].on_click(None)
+    return ui
+
+
 def test_page_built_and_dialog_hidden():
     page = _page()
     assert page.added, "контролы страницы не добавлены"
-    assert page.shown, "диалог «Подробнее» не зарегистрирован"
-    assert not page.shown[0].open, "диалог скрыт до нажатия «Подробнее»"
+    assert page.ui["dialog"] is not None
+    assert not page.ui["dialog"].open, "диалог скрыт до нажатия «Подробнее»"
     assert page.window.width == 1100 and page.window.height == 720
     assert callable(page.on_resize), "обработчик on_resize не назначен"
 
@@ -74,10 +93,41 @@ def test_responsive_resize():
     assert page.ui["service_card"].height is None, "карточка не должна быть квадратом фиксированной высоты"
 
 
+def test_login_gate_asks_phone_first():
+    """Запуск фронта — заглушка входа в приложение МТС, номер один раз."""
+    page = _page()
+    ui = page.ui
+    assert LOGIN_TITLE in ui["header_subtitle"].value
+    assert ui["login_gate"].visible
+    assert not ui["catalog"].visible
+    assert not ui["back_btn"].visible
+
+    ui["login_btn"].on_click(None)
+    assert ui["login_error"].visible, "без номера войти нельзя"
+    assert ui["login_gate"].visible
+
+    _enter_mts(page)
+    assert HEADER_CONNECT_SUBTITLE in ui["header_subtitle"].value
+    assert ui["catalog"].visible
+    assert not ui["login_gate"].visible
+    assert not ui["features_panel"].visible
+    assert ui["service_card"].visible
+    assert ui["service_card"] in _flatten(ui["catalog"])
+    assert ui["extra_card"] in _flatten(ui["catalog"])
+    catalog_text = " ".join(
+        getattr(c, "value", "") or ""
+        for c in _flatten(ui["catalog"])
+        if isinstance(c, ft.Text)
+    )
+    assert CATALOG_TITLE in catalog_text
+    assert EXTRA_SERVICE_NAME in catalog_text
+    assert SERVICE_NAME in catalog_text
+
+
 def test_consent_gates_connect_button():
     """Кнопка подключения «тухнет» без согласия и оферту можно принять."""
     page = _page()
-    ui = page.ui
+    ui = _enter_mts(page)
 
     assert ui["consent"].value is False, "согласие не отмечено по умолчанию"
     assert not ui["connect_btn"].disabled, "кнопка остаётся кликабельной"
@@ -85,7 +135,8 @@ def test_consent_gates_connect_button():
 
     ui["connect_btn"].on_click(None)
     assert ui["service_card"].visible, "без согласия подключать нельзя"
-    assert ui["stage"].controls[0] is ui["service_card"]
+    assert ui["catalog"].visible
+    assert not ui["features_panel"].visible
     assert ui["consent"].error, "должна появиться подсказка про согласие"
     assert ui["consent_error"].visible
 
@@ -94,6 +145,10 @@ def test_consent_gates_connect_button():
     assert ui["connect_btn"].opacity == 1.0, "после согласия кнопка активна"
     assert not ui["consent"].error
     assert not ui["consent_error"].visible
+
+    ui["connect_btn"].on_click(None)
+    assert ui["features_panel"].visible, "номер уже из входа"
+    assert not ui["catalog"].visible
 
 
 def test_feature_bullets_are_simple_checks():
@@ -111,22 +166,23 @@ def test_feature_bullets_are_simple_checks():
         assert icon.icon != ft.Icons.CHECK_CIRCLE
         assert icon.icon != ft.Icons.CHECK_BOX_OUTLINE_BLANK
     texts = " ".join(
-        c.value
+        getattr(c, "value", "") or ""
         for c in dialog_column.controls
         if isinstance(c, ft.Text)
     )
-    assert "Telegram" not in texts, "Telegram не предлагается до подключения"
+    assert "Telegram-бота" not in texts, "кнопка бота не в окне подключения"
 
 
 def test_telegram_option_only_after_connect():
     """После подключения — название услуги, чеки настроек и переход в бота."""
     page = _page()
-    ui = page.ui
+    ui = _enter_mts(page)
 
     dialog_column = ui["dialog_box"].content
     assert ui["tg_open_btn"] not in _flatten(dialog_column), "бота нет в окне подключения"
     assert HEADER_CONNECT_SUBTITLE in ui["header_subtitle"].value
-    assert ui["stage"].controls[0] is ui["service_card"]
+    assert ui["catalog"].visible
+    assert not ui["back_btn"].visible
 
     ui["consent"].value = True
     ui["consent"].on_change(SimpleNamespace(control=ui["consent"]))
@@ -134,16 +190,45 @@ def test_telegram_option_only_after_connect():
 
     assert SERVICE_NAME in ui["header_subtitle"].value
     assert HEADER_CONNECT_SUBTITLE not in ui["header_subtitle"].value
-    assert ui["stage"].controls[0] is ui["features_panel"]
     assert ui["features_panel"].visible
+    assert not ui["catalog"].visible
+    assert ui["back_btn"].visible
     assert ui["setting_checks"], "должны быть чекбоксы настроек"
     assert all(isinstance(c, ft.Checkbox) for c in ui["setting_checks"])
     assert ui["tg_open_btn"] in _flatten(ui["features_panel"])
     assert ui["tg_open_btn"].content == TELEGRAM_OPEN_TEXT
-    assert ui["tg_open_btn"].url == TELEGRAM_BOT_URL
+    assert ui["tg_active"].value is False
+    assert not getattr(ui["tg_open_btn"], "url", None), "url на кнопке открывает Telegram второй раз"
 
     ui["tg_open_btn"].on_click(None)
-    assert page.launched == [TELEGRAM_BOT_URL]
+    assert page.launched
+    assert "start=79001112233" in page.launched[-1]
+    assert page.launched.count(page.launched[-1]) == 1
+
+    ui["disconnect_btn"].on_click(None)
+    assert ui["catalog"].visible
+    assert not ui["features_panel"].visible
+    assert not ui["back_btn"].visible
+    assert HEADER_CONNECT_SUBTITLE in ui["header_subtitle"].value
+    assert ui["service_card"].visible
+    assert ui["extra_card"].visible
+    assert ui["tg_active"].value is False
+
+    shown_before = len(page.shown)
+    ui["dialog"].open = False
+    ui["more_btn"].on_click(None)
+    assert ui["dialog"].open, "после выхода «Подробнее» снова открывает услугу"
+    assert len(page.shown) > shown_before
+
+    ui["consent"].value = True
+    ui["connect_btn"].on_click(None)
+    assert ui["features_panel"].visible, "после отключения услугу можно подключить снова"
+    assert ui["back_btn"].visible
+    assert ui["tg_active"].value is False, "старый /start не включает ползунок сам"
+
+    ui["back_btn"].on_click(None)
+    assert ui["catalog"].visible
+    assert ui["service_card"].visible
 
 
 def _flatten(control):

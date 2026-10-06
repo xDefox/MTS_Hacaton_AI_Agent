@@ -26,7 +26,16 @@ from backend.services.speechkit_stt import (
     synthesize_ogg,
     transcribe_audio,
 )
-from backend.services.telegram_notify import add_subscriber, notify_call_report, payload_from_response
+from backend.services.telegram_notify import (
+    activate_line,
+    add_subscriber,
+    last_pending_phone,
+    line_status,
+    notify_call_report,
+    payload_from_response,
+    register_line,
+    deactivate_line,
+)
 from backend.services.tts_storage import (
     audio_path_for_call,
     audio_url_for_call,
@@ -41,6 +50,11 @@ router = APIRouter(prefix="/api/v1", tags=["calls"])
 
 class TelegramSubscribe(BaseModel):
     chat_id: int = Field(..., description="Telegram chat_id Ивана после /start")
+    phone: str = Field(default="", description="Номер линии из приложения МТС / заглушки")
+
+
+class TelegramRegister(BaseModel):
+    phone: str = Field(..., min_length=5, description="Номер, на который подключают услугу")
 
 
 async def _attach_agent_tts(response: CallResponse) -> CallResponse:
@@ -72,11 +86,40 @@ async def _notify_ivan(response: CallResponse, *, phone: str, transcript: str | 
         logger.exception("Telegram notify failed")
 
 
+@router.post("/telegram/register")
+def telegram_register(body: TelegramRegister) -> dict:
+    """Фронт: заглушка номера МТС до /start в боте."""
+    try:
+        phone = register_line(body.phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Укажите номер телефона") from exc
+    return line_status(phone)
+
+
 @router.post("/telegram/subscribe")
 def telegram_subscribe(body: TelegramSubscribe) -> dict:
-    """Бот регистрирует чат, куда слать отчёты по реальным звонкам."""
+    """Бот /start: услуга активна на номере."""
+    phone = body.phone or last_pending_phone()
+    if not phone:
+        raise HTTPException(status_code=400, detail="Нет номера линии")
+    activate_line(phone, body.chat_id)
     add_subscriber(body.chat_id)
-    return {"ok": True, "chat_id": body.chat_id}
+    return line_status(phone)
+
+
+@router.post("/telegram/deactivate")
+def telegram_deactivate(body: TelegramRegister) -> dict:
+    """Фронт: отключить услугу — не считать номер активированным, пока снова не будет /start."""
+    try:
+        phone = deactivate_line(body.phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Укажите номер телефона") from exc
+    return line_status(phone)
+
+
+@router.get("/telegram/status")
+def telegram_status(phone: str = Query(..., min_length=5)) -> dict:
+    return line_status(phone)
 
 
 @router.post("/process_call", response_model=CallResponse)
