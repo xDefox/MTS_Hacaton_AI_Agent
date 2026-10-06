@@ -1,4 +1,6 @@
-# AI Call Agent — Track 1 (`feature/backend`)
+# AI Call Agent — Track 1
+
+> Ветка разработки бэка: `feature/backend`. В `main`: `backend/` + `frontend/`.
 
 ## Сделано
 
@@ -8,8 +10,8 @@
 - [x] История звонков (SQLite `data/calls.db`) — ТЗ «контроль и управление»
 - [x] `GET /api/v1/calls`, `?critical_only=true`, `GET /api/v1/calls/{id}`
 - [x] Сохранение после каждого `process_call` → `call_id`
-- [x] Smoke-тесты: `backend/scripts/smoke_test.py`, `backend/scripts/smoke_history.py`
-- [x] Структура: весь бэк в `backend/`, `frontend/` в этой ветке нет (живёт в `main`)
+- [x] Smoke-тесты: `backend/scripts/smoke_*.py`
+- [x] Структура: бэк в `backend/`, фронт в `frontend/`
 
 ## ТЗ → продукт
 
@@ -46,4 +48,4 @@ python backend/scripts/smoke_history.py
 
 1. Telegram-уведомление после звонка  
 2. Стыковка с фронтом (`GET /calls`)  
-3. Merge в `main` (backend / frontend раздельно) — когда решите  
+3. SpeechKit / сценарии UI  
