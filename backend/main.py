@@ -16,9 +16,9 @@ app = FastAPI(
     title="MTS AI Agent API",
     description=(
         "Трек 1: ИИ-агент входящих звонков для Ивана. "
-        "SpeechKit STT/TTS + YandexGPT + SQLite-история (ТЗ)."
+        "Локальный контур: Ollama LLM + Whisper STT + local TTS + SQLite."
     ),
-    version="1.3.0",
+    version="1.4.0",
 )
 
 app.add_middleware(
@@ -44,8 +44,11 @@ def health_check():
     return {
         "status": "ok",
         "message": "API is running",
+        "llm_provider": settings.llm_provider,
+        "stt_provider": settings.stt_provider,
+        "tts_provider": settings.tts_provider,
+        "ollama_model": settings.ollama_model,
+        "whisper_model": settings.whisper_model_size,
         "yandex_configured": bool(settings.yc_folder_id and settings.yc_api_key),
-        "speechkit": "stt+tts via same YC credentials",
-        "model": f"{settings.yandex_model}:{settings.yandex_model_version}",
         "database": db_hint,
     }

@@ -1,10 +1,10 @@
 from typing import Literal, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from backend.config import get_settings
 from backend.database import get_db
 from backend.schemas import (
     CallHistoryItem,
@@ -16,40 +16,30 @@ from backend.schemas import (
     TranscribeResponse,
     VoiceCallResponse,
 )
+from backend.services.call_agent import process_incoming_call
 from backend.services.call_history import call_log_to_item, get_call_log, list_call_logs, save_call_log
-from backend.services.speechkit_stt import (
-    SpeechKitError,
-    guess_audio_format,
-    synthesize_ogg,
-    transcribe_audio,
-)
+from backend.services.speech_providers import SpeechError, synthesize_agent_audio, transcribe_bytes
+from backend.services.speechkit_stt import guess_audio_format
 from backend.services.tts_storage import (
-    audio_path_for_call,
     audio_url_for_call,
     ensure_tts_dir,
+    find_call_audio,
     save_call_audio,
 )
-from backend.services.yandex_llm import process_call_with_yandex
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
 
 
 async def _attach_agent_tts(response: CallResponse) -> CallResponse:
-    """Озвучить agent_response → data/tts/call_{id}.ogg + audio_url (демо, не прод-стрим)."""
+    """Озвучить agent_response → data/tts/ + audio_url (демо)."""
     if response.call_id is None or not response.agent_response.strip():
         return response
-    settings = get_settings()
     try:
-        audio = await synthesize_ogg(
-            response.agent_response,
-            voice=settings.tts_voice,
-            lang=settings.tts_lang,
-        )
-        save_call_audio(response.call_id, audio)
+        audio, ext, engine = await synthesize_agent_audio(response.agent_response)
+        save_call_audio(response.call_id, audio, ext=ext)
         response.audio_url = audio_url_for_call(response.call_id)
-        response.tts_engine = "yandex-speechkit"
-    except SpeechKitError:
-        # Текст/история уже есть — TTS не валим весь ответ
+        response.tts_engine = engine
+    except SpeechError:
         response.audio_url = None
         response.tts_engine = None
     return response
@@ -60,16 +50,15 @@ async def process_call(
     data: CallRequest,
     with_audio: bool = Query(
         False,
-        description="Если true — озвучить agent_response (SpeechKit TTS → data/tts/)",
+        description="Если true — озвучить agent_response (локальный TTS → data/tts/)",
     ),
     db: Session = Depends(get_db),
 ) -> CallResponse:
     """
-    Process one caller turn: YandexGPT → JSON, then save to SQLite history
-    (ТЗ: контроль и управление — история звонков).
+    Одна реплика звонящего → локальный LLM (Ollama) / опц. Yandex → история.
     """
     try:
-        response = await process_call_with_yandex(data)
+        response = await process_incoming_call(data)
         row = save_call_log(db, data, response)
         response.call_id = row.id
         if with_audio:
@@ -81,97 +70,87 @@ async def process_call(
 
 @router.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe(
-    audio: UploadFile = File(..., description="Аудио: ogg/opus (рекомендуется) или raw lpcm"),
+    audio: UploadFile = File(..., description="Аудио: ogg/opus или wav"),
     lang: str = Form("ru-RU"),
-    audio_format: Optional[Literal["oggopus", "lpcm"]] = Form(
-        None,
-        description="Если не указан — угадываем по имени файла",
-    ),
-    sample_rate_hertz: Optional[int] = Form(
-        None,
-        description="Только для lpcm: 48000 / 16000 / 8000",
-    ),
+    audio_format: Optional[Literal["oggopus", "lpcm"]] = Form(None),
+    sample_rate_hertz: Optional[int] = Form(None),
 ) -> TranscribeResponse:
-    """SpeechKit STT: голос → текст (ТЗ: точность расшифровки)."""
+    """STT: по умолчанию локальный Whisper (faster-whisper)."""
     raw = await audio.read()
     fmt = audio_format or guess_audio_format(audio.filename, audio.content_type)
     try:
-        text = await transcribe_audio(
+        text, engine = await transcribe_bytes(
             raw,
-            audio_format=fmt,
             lang=lang,
+            audio_format=fmt,
             sample_rate_hertz=sample_rate_hertz,
         )
-    except SpeechKitError as exc:
+    except SpeechError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return TranscribeResponse(transcript=text, lang=lang, audio_format=fmt)
+    return TranscribeResponse(
+        transcript=text,
+        lang=lang,
+        audio_format=fmt,
+        engine=engine,
+    )
 
 
 @router.post("/synthesize", response_model=SynthesizeResponse)
 async def synthesize(body: SynthesizeRequest) -> SynthesizeResponse:
-    """
-    Текст → речь (SpeechKit TTS).
-    Демо-сохранение в data/tts/synth_*.ogg. В проде — стрим в голосовой канал.
-    """
-    settings = get_settings()
-    voice = body.voice or settings.tts_voice
+    """Текст → речь (локальный TTS по умолчанию)."""
     try:
-        audio = await synthesize_ogg(body.text, voice=voice, lang=body.lang)
-    except SpeechKitError as exc:
+        audio, ext, engine = await synthesize_agent_audio(body.text)
+    except SpeechError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     ensure_tts_dir()
-    from uuid import uuid4
-
-    name = f"synth_{uuid4().hex[:12]}.ogg"
+    name = f"synth_{uuid4().hex[:12]}.{ext}"
     path = ensure_tts_dir() / name
     path.write_bytes(audio)
     return SynthesizeResponse(
         text=body.text,
         filename=name,
         audio_url=f"/api/v1/tts/{name}",
+        engine=engine,
     )
 
 
 @router.get("/tts/{filename}")
 def get_synth_file(filename: str) -> FileResponse:
-    """Скачать демо-файл TTS из data/tts/ (только *.ogg, без path traversal)."""
-    if "/" in filename or "\\" in filename or not filename.endswith(".ogg"):
+    """Скачать демо-файл TTS из data/tts/."""
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not (filename.endswith(".ogg") or filename.endswith(".wav")):
         raise HTTPException(status_code=400, detail="Invalid filename")
     path = ensure_tts_dir() / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Audio not found")
-    return FileResponse(path, media_type="audio/ogg", filename=filename)
+    media = "audio/wav" if filename.endswith(".wav") else "audio/ogg"
+    return FileResponse(path, media_type=media, filename=filename)
 
 
 @router.post("/process_call_voice", response_model=VoiceCallResponse)
 async def process_call_voice(
-    audio: UploadFile = File(..., description="Реплика звонящего (oggopus / lpcm)"),
+    audio: UploadFile = File(..., description="Реплика звонящего"),
     session_id: str = Form(...),
     client_phone: str = Form("unknown"),
     lang: str = Form("ru-RU"),
     audio_format: Optional[Literal["oggopus", "lpcm"]] = Form(None),
     sample_rate_hertz: Optional[int] = Form(None),
-    with_audio: bool = Form(
-        True,
-        description="Озвучить ответ агента (по умолчанию да — голосовая цепочка)",
-    ),
+    with_audio: bool = Form(True),
     db: Session = Depends(get_db),
 ) -> VoiceCallResponse:
-    """
-    Голос → STT → YandexGPT → (опц.) TTS ответа → история.
-    По ТЗ: звонящий слышит ответ голосом; здесь файл в data/tts/ для демо.
-    """
+    """Голос → Whisper STT → локальный LLM → (опц.) TTS → история."""
     raw = await audio.read()
     fmt = audio_format or guess_audio_format(audio.filename, audio.content_type)
     try:
-        transcript = await transcribe_audio(
+        transcript, stt_engine = await transcribe_bytes(
             raw,
-            audio_format=fmt,
             lang=lang,
+            audio_format=fmt,
             sample_rate_hertz=sample_rate_hertz,
         )
-    except SpeechKitError as exc:
+    except SpeechError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     data = CallRequest(
@@ -180,7 +159,7 @@ async def process_call_voice(
         client_phone=client_phone or "unknown",
     )
     try:
-        response = await process_call_with_yandex(data)
+        response = await process_incoming_call(data)
         row = save_call_log(db, data, response)
         response.call_id = row.id
         if with_audio:
@@ -191,6 +170,7 @@ async def process_call_voice(
     return VoiceCallResponse(
         **response.model_dump(),
         transcript=transcript,
+        stt_engine=stt_engine,
     )
 
 
@@ -200,7 +180,6 @@ def get_calls(
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> CallHistoryList:
-    """История звонков для дашборда Ивана (новые сверху)."""
     rows = list_call_logs(db, critical_only=critical_only, limit=limit)
     items = [call_log_to_item(row) for row in rows]
     return CallHistoryList(items=items, total=len(items))
@@ -208,7 +187,6 @@ def get_calls(
 
 @router.get("/calls/{call_id}", response_model=CallHistoryItem)
 def get_call_detail(call_id: int, db: Session = Depends(get_db)) -> CallHistoryItem:
-    """Детали звонка: резюме + реплика + ответ агента."""
     row = get_call_log(db, call_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
@@ -217,21 +195,14 @@ def get_call_detail(call_id: int, db: Session = Depends(get_db)) -> CallHistoryI
 
 @router.get("/calls/{call_id}/audio")
 def get_call_audio(call_id: int, db: Session = Depends(get_db)) -> FileResponse:
-    """
-    Скачать озвучку ответа агента (демо).
-    Файл: data/tts/call_{id}.ogg — не в git.
-    """
     row = get_call_log(db, call_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
-    path = audio_path_for_call(call_id)
-    if not path.is_file():
+    path = find_call_audio(call_id)
+    if path is None:
         raise HTTPException(
             status_code=404,
             detail="Audio not generated yet. Call process_call?with_audio=true or process_call_voice.",
         )
-    return FileResponse(
-        path,
-        media_type="audio/ogg",
-        filename=f"call_{call_id}.ogg",
-    )
+    media = "audio/wav" if path.suffix.lower() == ".wav" else "audio/ogg"
+    return FileResponse(path, media_type=media, filename=path.name)

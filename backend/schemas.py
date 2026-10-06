@@ -114,9 +114,9 @@ class SynthesizeResponse(BaseModel):
     text: str
     audio_url: Optional[str] = None
     filename: str
-    engine: str = "yandex-speechkit"
+    engine: str = "pyttsx3-local"
     note: str = (
-        "Демо: файл в data/tts/. По ТЗ в проде TTS стримится звонящему, без долгого хранения."
+        "Демо: файл в data/tts/. Локальный TTS по умолчанию; в проде — стрим в трубку."
     )
 
 
@@ -145,16 +145,16 @@ class CallHistoryList(BaseModel):
 
 
 class TranscribeResponse(BaseModel):
-    """Результат SpeechKit STT."""
+    """Результат STT (локальный Whisper по умолчанию)."""
 
     transcript: str
     lang: str = "ru-RU"
     audio_format: str = "oggopus"
-    engine: str = "yandex-speechkit"
+    engine: str = "faster-whisper"
 
 
 class VoiceCallResponse(CallResponse):
     """Голос → STT → агент + история."""
 
-    transcript: str = Field(..., description="Распознанный текст (SpeechKit)")
-    stt_engine: str = "yandex-speechkit"
+    transcript: str = Field(..., description="Распознанный текст")
+    stt_engine: str = "faster-whisper"
