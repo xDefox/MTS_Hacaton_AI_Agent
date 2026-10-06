@@ -25,7 +25,33 @@ class RoutingRule:
 
 
 # Порядок важен: первое совпадение побеждает.
+# Явная просьба человека — выше спама/оффтопа (даже в смешанных фразах).
 DEFAULT_RULES: list[RoutingRule] = [
+    RoutingRule(
+        id="rule-human",
+        name="Горячая линия",
+        description="Явная просьба человека → transfer_to_human",
+        keywords=[
+            "соедините с менеджером",
+            "соедините с иваном",
+            "с человеком",
+            "оператор",
+            "живой человек",
+            "переведите на",
+        ],
+        is_critical=True,
+        intent="escalation",
+        action_required="transfer_to_human",
+    ),
+    RoutingRule(
+        id="rule-complaint",
+        name="Жалоба / инцидент",
+        description="Важное через callback, не всегда live-перевод",
+        keywords=["жалоб", "претензи", "инцидент", "возмутительно"],
+        is_critical=True,
+        intent="complaint",
+        action_required="callback_recommended",
+    ),
     RoutingRule(
         id="rule-spam-ads",
         name="Холодные продажи / реклама",
@@ -94,31 +120,6 @@ DEFAULT_RULES: list[RoutingRule] = [
         intent="wrong_number",
         action_required="continue_dialog",
     ),
-    RoutingRule(
-        id="rule-complaint",
-        name="Жалоба / инцидент",
-        description="Важное через callback, не всегда live-перевод",
-        keywords=["жалоб", "претензи", "инцидент", "возмутительно"],
-        is_critical=True,
-        intent="complaint",
-        action_required="callback_recommended",
-    ),
-    RoutingRule(
-        id="rule-human",
-        name="Горячая линия",
-        description="Явная просьба человека → transfer_to_human",
-        keywords=[
-            "соедините с менеджером",
-            "соедините с иваном",
-            "с человеком",
-            "оператор",
-            "живой человек",
-            "переведите на",
-        ],
-        is_critical=True,
-        intent="escalation",
-        action_required="transfer_to_human",
-    ),
 ]
 
 
@@ -134,18 +135,37 @@ def load_rules_raw() -> list[RoutingRule]:
 
 
 def merge_missing_defaults() -> None:
+    """Добавить новые default-правила и обновить ключевые слова у известных id."""
     if not RULES_PATH.is_file():
         save_rules(DEFAULT_RULES)
         return
     existing = load_rules_raw()
-    have = {r.id for r in existing}
-    added = False
+    by_id = {r.id: r for r in existing}
+    default_ids = {r.id for r in DEFAULT_RULES}
+    # defaults first (актуальный порядок + keywords), затем кастом пользователя
+    merged: list[RoutingRule] = []
     for rule in DEFAULT_RULES:
-        if rule.id not in have:
-            existing.append(rule)
-            added = True
-    if added:
-        save_rules(existing)
+        if rule.id in by_id:
+            custom = by_id[rule.id]
+            # сохраняем enabled пользователя, остальное из DEFAULT
+            merged.append(
+                RoutingRule(
+                    id=rule.id,
+                    name=rule.name,
+                    description=rule.description,
+                    keywords=list(rule.keywords),
+                    is_critical=rule.is_critical,
+                    intent=rule.intent,
+                    action_required=rule.action_required,
+                    enabled=custom.enabled,
+                )
+            )
+        else:
+            merged.append(rule)
+    for rule in existing:
+        if rule.id not in default_ids:
+            merged.append(rule)
+    save_rules(merged)
 
 
 def _ensure_file() -> None:
