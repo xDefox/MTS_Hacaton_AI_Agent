@@ -1,30 +1,39 @@
-# AI Call Agent — Track 1 (checkpoint 1)
+# AI Call Agent — Track 1 (`feature/backend`)
 
-> Ветка: `feature/backend`. Код бэкенда: **`backend/`**.
+> **main не трогаем.** Работа в ветке `feature/backend`, код в `backend/`.
 
-**Статус чекпоинта 1:** ✅ YandexGPT + системный промпт Ивана + `POST /api/v1/process_call`.
+## Статус
 
-## Трек
+- [x] Чекпоинт 1: YandexGPT + системный промпт + `POST /api/v1/process_call`
+- [x] История звонков (SQLite) — ТЗ «контроль и управление»
+- [x] `frontend/` убран из этой ветки (остаётся в `main` / `feature/frontend`)
 
-ИИ-секретарь принимает **входящие** звонки за Ивана Петрова → отвечает звонящему → отдаёт `summary` + `is_critical` для Ивана.
+## ТЗ → БД
 
-## Must-have ТЗ
-
-- [ ] Подключение ≤ 5 мин (UI)
-- [x] Маршрутизация в логике API/промпта (голос / чат / человек)
-- [x] Суть обращения (`summary`)
-- [ ] Контроль: история / сценарии (следующий этап)
-- [~] Безопасность: фраза о записи в промпте
+| Требование ТЗ | Как закрыто |
+|---|---|
+| Контроль: история звонков | таблица `call_logs` + `GET /api/v1/calls` |
+| Суть обращения | поле `summary` + `user_message` (реплика/транскрипт) |
+| Важное vs рутина | `is_critical`, фильтр `?critical_only=true` |
+| Карточка для Ивана | `GET /api/v1/calls/{id}`: резюме, ответ агента, intent, action |
+| Безопасность (прототип) | `data/calls.db` локально, в `.gitignore`, без API-ключей в БД |
 
 ## API
 
-- `POST /api/v1/process_call`
+- `POST /api/v1/process_call` → ответ ИИ + `call_id` (запись в БД)
+- `GET /api/v1/calls` / `?critical_only=true`
+- `GET /api/v1/calls/{id}`
 - `GET /health`
 
 Запуск: `uvicorn backend.main:app --reload --port 8000`
 
-## Дальше (не в main checkpoint 1)
+```bash
+python backend/scripts/smoke_test.py
+python backend/scripts/smoke_history.py
+```
 
-- История звонков (SQLite)
-- Telegram / Flet UI
+## Дальше
+
+- Telegram-уведомления
 - SpeechKit
+- Сценарии / правила (UI)

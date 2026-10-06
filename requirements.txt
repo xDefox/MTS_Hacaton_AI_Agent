@@ -4,3 +4,4 @@ pydantic>=2.9.0
 pydantic-settings>=2.6.0
 python-dotenv>=1.0.0
 yandex-ai-studio-sdk>=0.22.0
+sqlalchemy>=2.0.0
