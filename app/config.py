@@ -1,6 +1,10 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_DB_PATH = ROOT_DIR / "data" / "calls.db"
 
 
 class Settings(BaseSettings):
@@ -23,6 +27,9 @@ class Settings(BaseSettings):
 
     company_name: str = "IT-компания Ивана Петрова"
     owner_name: str = "Иван Петров"
+
+    # Local SQLite for call history (hackathon prototype). Not for production PDn.
+    database_url: str = f"sqlite:///{DEFAULT_DB_PATH.as_posix()}"
 
 
 @lru_cache

@@ -29,7 +29,7 @@ YandexGPT подключён, системный промпт Ивана, smoke-
 - [ ] **Простота подключения** — настройка «не более 5 минут» (мастер из коробки / понятный онбординг)
 - [x] **Гибкость маршрутизации** — логика в промпте/API: голос (`continue_dialog`) **или** чат (`offer_telegram_chat`) **или** человек (`transfer_to_human`) · UI/Telegram ещё нет
 - [x] **Суть обращения** — `summary` + классификация от YandexGPT (STT пока текстовая симуляция реплики звонящего)
-- [ ] **Контроль и управление** — история звонков, редактирование сценариев, настройка правил
+- [~] **Контроль и управление** — история звонков в SQLite + API ✅ · редактирование сценариев / правила UI ещё нет
 - [~] **Безопасность** — в промпте уведомление о записи/обработке; полный compliance-блок ещё в презентации
 
 **Усиливающие ценность функции (делать ПОСЛЕ обязательных):**
@@ -58,25 +58,25 @@ YandexGPT подключён, системный промпт Ивана, smoke-
 MTS_Hacaton_AI_Agent/
 │
 ├── app/
-│   ├── main.py                 # ✅ FastAPI + CORS + /health
-│   ├── config.py               # ✅ YC_FOLDER_ID / YC_API_KEY из .env
-│   ├── schemas.py              # ✅ CallRequest / CallResponse / AgentLLMOutput
-│   ├── api/routes_call.py      # ✅ POST /api/v1/process_call
+│   ├── main.py                 # ✅ FastAPI + CORS + /health + init_db
+│   ├── config.py               # ✅ YC_* + DATABASE_URL
+│   ├── database.py             # ✅ SQLAlchemy / SQLite
+│   ├── models.py               # ✅ CallLog
+│   ├── schemas.py              # ✅ CallRequest / CallResponse / CallHistoryItem
+│   ├── api/routes_call.py      # ✅ process_call + GET /calls
 │   ├── prompts/system_ivan.py  # ✅ Системный промпт Трека 1
-│   └── services/yandex_llm.py  # ✅ YandexGPT + JSON + fallback
+│   └── services/
+│       ├── yandex_llm.py       # ✅ YandexGPT + JSON + fallback
+│       └── call_history.py     # ✅ save / list / get
 │
-├── scripts/smoke_test.py       # ✅ 3 сценария: лид / спам / эскалация
-├── requirements.txt            # ✅ fastapi, uvicorn, yandex-ai-studio-sdk, ...
-├── .env.example                # ✅ шаблон ключей
-├── README.md                   # ✅ runbook чекпоинта 1
-│
-├── frontend/                   # ⬜ зона фронта (Flet)
-│   ├── app.py
-│   ├── api_client.py
-│   └── assets/
-│
-├── app/database.py             # ⬜ SQLite история (следующий этап бэка)
-└── docs/tasks.md               # этот файл
+├── scripts/smoke_test.py       # ✅ LLM сценарии
+├── scripts/smoke_history.py    # ✅ история после process_call
+├── requirements.txt
+├── .env.example
+├── README.md
+├── frontend/                   # Flet / Telegram (партнёр)
+├── data/calls.db               # локально, не в git
+└── docs/tasks.md
 ```
 
 ---
@@ -87,8 +87,8 @@ MTS_Hacaton_AI_Agent/
 
 - [x] Модели вынесены в `app/schemas.py`
 - [x] Запрос: `session_id`, `user_message`, `client_phone`, опц. `dialog_history`
-- [x] Ответ: `agent_response`, `is_critical`, `priority`, `intent`, `action_required`, `summary`, `caller_name`, `recommended_next_step`, `session_id`, `model`
-- [ ] `history_item` / модель для списка истории — после SQLite
+- [x] Ответ: `agent_response`, `is_critical`, `priority`, `intent`, `action_required`, `summary`, `caller_name`, `recommended_next_step`, `session_id`, `model`, `call_id`
+- [x] `CallHistoryItem` / `CallHistoryList` для истории
 - [x] Версия API: `/api/v1/...`
 
 **Актуальный контракт `action_required`:**
@@ -133,15 +133,18 @@ MTS_Hacaton_AI_Agent/
 
 ---
 
-## 7. Этап 4 — База данных и история — ⬜ СЛЕДУЮЩИЙ ЭТАП БЭКА
+## 7. Этап 4 — База данных и история — ✅ ГОТОВО
 
 > Закрывает ТЗ «Контроль и управление: история звонков».
 
-- [ ] SQLite (SQLAlchemy)
-- [ ] Сущность `CallLog`: `id`, `session_id`, `caller_phone`, `transcript`, `summary`, `is_critical`, `intent`, `action_required`, `timestamp`
-- [ ] `GET /api/v1/calls` — история (фильтр по важности)
-- [ ] `GET /api/v1/calls/{id}` — детали
+- [x] SQLite (SQLAlchemy), файл `data/calls.db` (gitignore)
+- [x] Сущность `CallLog`: id, session_id, caller_phone, user_message, agent_response, summary, is_critical, priority, intent, action_required, caller_name, recommended_next_step, model, created_at
+- [x] `GET /api/v1/calls` — история (`critical_only` фильтр)
+- [x] `GET /api/v1/calls/{id}` — детали
+- [x] `POST /api/v1/process_call` сохраняет запись и возвращает `call_id`
 - [ ] (опц.) `GET /api/v1/stats`
+
+**Безопасность прототипа:** локальная БД без ключей; без auth на localhost; в презентации — контур оператора / Postgres / аудит.
 
 ---
 
@@ -202,8 +205,8 @@ uvicorn app.main:app --reload --port 8000
 | 2 | Структура `app/` (config, services, routes) | ✅ |
 | 3 | Бизнес-логика важности + маршрутизация (через LLM) | ✅ |
 | 4 | YandexGPT + промпт Ивана + smoke | ✅ чекпоинт 1 |
-| 5 | SQLite + история звонков | ☐ бэк |
-| 6 | Flet-дашборд: список, детали, тумблер | ☐ фронт |
+| 5 | SQLite + история звонков | ✅ |
+| 6 | Flet-дашборд: список, детали, тумблер | ☐ фронт (кормит `GET /calls`) |
 | 7 | Панель симуляции звонка | ☐ фронт |
 | 8 | Редактор сценариев/правил | ☐ |
 | 9 | Compliance + «жизнь внутри оператора» | ☐ |

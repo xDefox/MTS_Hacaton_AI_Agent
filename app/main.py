@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_call import router as call_router
 from app.config import get_settings
+from app.database import init_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,9 +16,10 @@ app = FastAPI(
     title="MTS AI Agent API",
     description=(
         "Трек 1: ИИ-агент входящих звонков для IT-предпринимателя Ивана. "
-        "YandexGPT + system prompt → ответ, критичность, резюме для Telegram."
+        "YandexGPT + system prompt → ответ, критичность, резюме; "
+        "локальная SQLite-история для дашборда."
     ),
-    version="1.0.0",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -31,6 +33,11 @@ app.add_middleware(
 app.include_router(call_router)
 
 
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
+
+
 @app.get("/health")
 def health_check():
     settings = get_settings()
@@ -39,4 +46,5 @@ def health_check():
         "message": "API is running",
         "yandex_configured": bool(settings.yc_folder_id and settings.yc_api_key),
         "model": f"{settings.yandex_model}:{settings.yandex_model_version}",
+        "database": settings.database_url.split("///")[-1] if "///" in settings.database_url else "configured",
     }
