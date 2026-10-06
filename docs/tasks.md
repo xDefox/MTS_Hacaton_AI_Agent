@@ -2,23 +2,24 @@
 
 > Ветка бэка: `feature/backend` (только `backend/`). В `main`: `backend/` + `frontend/`. Без `.env.example` в репозитории.
 
-## Сделано
+## Сделано (к CP1)
 
-- [x] Чекпоинт 1: YandexGPT + системный промпт Ивана + `POST /api/v1/process_call`
+- [x] YandexGPT + системный промпт Ивана + `POST /api/v1/process_call`
 - [x] Structured JSON: `agent_response`, `is_critical`, `priority`, `intent`, `action_required`, `summary`
 - [x] Fallback, если Yandex недоступен
 - [x] История звонков (SQLite `data/calls.db`) — ТЗ «контроль и управление»
 - [x] `GET /api/v1/calls`, `?critical_only=true`, `GET /api/v1/calls/{id}`
-- [x] Сохранение после каждого `process_call` → `call_id`
-- [x] Smoke-тесты: `backend/scripts/smoke_*.py`
+- [x] Сохранение после `process_call` / `process_call_voice` → `call_id`
 - [x] SpeechKit STT: `POST /api/v1/transcribe`, голос→агент `POST /api/v1/process_call_voice`
+- [x] Smoke: `smoke_test.py`, `smoke_history.py`, `smoke_voice.py`
 - [x] Структура: бэк в `backend/` (фронт только в `main`)
 
 ## ТЗ → продукт
 
 | Требование ТЗ / CJM | Статус |
 |---|---|
-| ИИ принимает входящие за Ивана | есть (текст → агент) |
+| ИИ принимает входящие за Ивана | есть (текст и голос → агент) |
+| Важное vs рутина | `is_critical`, фильтр `critical_only` |
 | Точность расшифровки / суть | SpeechKit STT + `summary` |
 | Контроль: история звонков | SQLite + API |
 | Маршрутизация голос / чат / человек | промпт + `action_required` |
@@ -26,7 +27,7 @@
 | Безопасность прототипа | локальная БД, `.gitignore`, ключи в `.env` |
 | Онбординг ≤ 5 мин / UI сценариев | ещё нет (фронт) |
 | Telegram-уведомление Ивану | ещё нет |
-| SpeechKit голос (полный Realtime) | STT sync есть; Realtime/TTS в ответе — дальше |
+| SpeechKit Realtime / ответ голосом | STT sync есть; Realtime/TTS в трубку — дальше |
 
 ## Безопасность БД (хакатон)
 
@@ -38,15 +39,17 @@ OK для демо: локальный файл, не в git, без ключе�
 ```bash
 .\.venv\Scripts\activate
 uvicorn backend.main:app --reload --port 8000
-# Swagger: http://127.0.0.1:8000/docs
+# Swagger: http://127.0.0.1:8000/docs  (версия API 1.2.0+)
 
 python backend/scripts/smoke_test.py
 python backend/scripts/smoke_history.py
 python backend/scripts/smoke_voice.py
 ```
 
+Демо голоса в Swagger: короткий `.ogg` (до ~1 МБ), например `data/demo_call.ogg`. Не загружать длинные песни.
+
 ## Дальше
 
-1. Telegram-уведомление после звонка  
+1. Telegram-уведомление Ивану (`summary` + transcript)  
 2. Стыковка с фронтом (`GET /calls`)  
-3. SpeechKit / сценарии UI  
+3. SpeechKit Realtime / TTS-ответ звонящему  

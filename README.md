@@ -6,10 +6,13 @@
 
 ## Что умеет сейчас
 
-`POST /api/v1/process_call` — реплика звонящего → ответ ИИ + запись в историю.
+`POST /api/v1/process_call` — текст реплики → ответ ИИ + запись в историю.  
+`POST /api/v1/process_call_voice` — аудио (SpeechKit STT) → тот же агент + история.  
+`POST /api/v1/transcribe` — только голос → текст.
 
 | Поле | Смысл по ТЗ |
 |------|-------------|
+| `transcript` | Распознанная речь (только voice-эндпоинты) |
 | `agent_response` | Что говорит агент звонящему |
 | `is_critical` / `priority` | Важное обращение или рутина |
 | `intent` | Категория (коммерция, жалоба, спам, эскалация…) |
@@ -59,7 +62,8 @@ python backend/scripts/smoke_voice.py
 - `POST /api/v1/transcribe` — аудио → текст  
 - `POST /api/v1/process_call_voice` — аудио → STT → агент → история  
 
-В Swagger загрузите `.ogg` (OggOpus). Без микрофона: `smoke_voice.py` сам синтезирует фразу через TTS и прогоняет цепочку.
+В Swagger загружайте **короткий** `.ogg` (OggOpus, до ~1 МБ / одна фраза).  
+Длинные песни sync STT не принимает. Без микрофона: `python backend/scripts/smoke_voice.py`.
 
 ### Пример запроса
 
