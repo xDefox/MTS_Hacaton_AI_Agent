@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from backend.main import app
 
 SCENARIOS = [
     {
