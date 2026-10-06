@@ -4,6 +4,7 @@ System prompt for Track 1 (CJM): AI secretary for IT entrepreneur Ivan Petrov.
 
 from backend.config import Settings
 from backend.services.scenarios import list_scenarios
+from backend.services.training_examples import examples_prompt_block
 
 
 def build_system_prompt(settings: Settings) -> str:
@@ -22,6 +23,7 @@ def build_system_prompt(settings: Settings) -> str:
         if scenario_lines
         else "- (сценарии пока не заданы — отвечай общими словами, без выдуманных фактов)"
     )
+    training_block = examples_prompt_block()
 
     return f"""Ты — ИИ-секретарь компании «{company}». Владелец — {owner}.
 Ты принимаешь входящие звонки (часто с неизвестных номеров), пока {owner} на совещаниях или в разъездах.
@@ -34,6 +36,9 @@ def build_system_prompt(settings: Settings) -> str:
 
 ## Утверждённые сценарии Ивана (приоритет над выдумками)
 {scenarios_block}
+
+## Примеры из обучения Ивана (ориентир)
+{training_block}
 
 ## Таблица решений (ОБЯЗАТЕЛЬНО)
 | Ситуация | is_critical | intent | action_required |

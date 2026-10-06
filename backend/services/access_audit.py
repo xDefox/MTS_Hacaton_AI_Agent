@@ -21,3 +21,18 @@ def log_access(action: str, *, call_id: int | None = None, detail: str = "") -> 
     }
     with AUDIT_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def list_access_audit(*, limit: int = 100) -> list[dict[str, Any]]:
+    if not AUDIT_PATH.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in AUDIT_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return list(reversed(rows[-limit:]))

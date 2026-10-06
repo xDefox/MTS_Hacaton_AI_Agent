@@ -20,6 +20,7 @@ from backend.schemas import (
     ScenarioIn,
     SynthesizeRequest,
     SynthesizeResponse,
+    TrainingExampleIn,
     TranscribeResponse,
     VoiceCallResponse,
 )
@@ -36,7 +37,12 @@ from backend.services.routing_rules import delete_rule, list_rules, upsert_rule
 from backend.services.scenarios import delete_scenario, list_scenarios, upsert_scenario
 from backend.services.speech_providers import SpeechError, synthesize_agent_audio, transcribe_bytes
 from backend.services.speechkit_stt import guess_audio_format
-from backend.services.telegram_notify import notify_ivan_if_needed
+from backend.services.telegram_notify import list_notifications, notify_ivan_if_needed
+from backend.services.training_examples import (
+    delete_example,
+    list_examples,
+    upsert_example,
+)
 from backend.services.tts_storage import (
     audio_url_for_call,
     ensure_tts_dir,
@@ -45,6 +51,7 @@ from backend.services.tts_storage import (
 )
 from backend.services.yandex_llm import ensure_ai_disclosure
 from backend.config import get_settings
+from backend.services.access_audit import list_access_audit, log_access
 
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
@@ -211,8 +218,6 @@ def get_calls(
 
 @router.get("/calls/{call_id}", response_model=CallHistoryItem)
 def get_call_detail(call_id: int, db: Session = Depends(get_db)) -> CallHistoryItem:
-    from backend.services.access_audit import log_access
-
     row = get_call_log(db, call_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
@@ -227,8 +232,6 @@ def patch_call(
     db: Session = Depends(get_db),
 ) -> CallHistoryItem:
     """Ручная корректировка расшифровки / ответа ИИ / резюме (CJM)."""
-    from backend.services.access_audit import log_access
-
     row = update_call_log(db, call_id, body.model_dump(exclude_unset=True))
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
@@ -238,8 +241,6 @@ def patch_call(
 
 @router.get("/calls/{call_id}/audio")
 def get_call_audio(call_id: int, db: Session = Depends(get_db)) -> FileResponse:
-    from backend.services.access_audit import log_access
-
     row = get_call_log(db, call_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
@@ -339,4 +340,38 @@ async def hotline_transfer(
     if settings.notify_on_critical:
         await notify_ivan_if_needed(response, caller_phone=body.client_phone)
     return response
+
+
+@router.get("/notifications")
+def get_notifications(limit: int = Query(50, ge=1, le=200)) -> dict:
+    """Лента уведомлений Ивану (CJM: Telegram/кабинет)."""
+    items = list_notifications(limit=limit)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/audit")
+def get_audit(limit: int = Query(100, ge=1, le=500)) -> dict:
+    """Журнал доступа к карточкам/аудио (комплаенс: right to review)."""
+    items = list_access_audit(limit=limit)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/training_examples")
+def get_training_examples() -> dict:
+    """Примеры обучения агента (ТЗ усиление)."""
+    items = list_examples()
+    return {"items": items, "total": len(items)}
+
+
+@router.put("/training_examples")
+def put_training_example(body: TrainingExampleIn) -> dict:
+    return upsert_example(body.model_dump())
+
+
+@router.delete("/training_examples/{example_id}")
+def remove_training_example(example_id: str) -> dict:
+    ok = delete_example(example_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Example {example_id} not found")
+    return {"deleted": True, "id": example_id}
 

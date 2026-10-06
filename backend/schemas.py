@@ -203,3 +203,14 @@ class CallCorrectionIn(BaseModel):
     caller_name: Optional[str] = None
     recommended_next_step: Optional[str] = None
 
+
+class TrainingExampleIn(BaseModel):
+    """Пример для обучения агента (ТЗ усиление)."""
+
+    id: Optional[str] = None
+    user_message: str
+    expected_intent: str = "other"
+    expected_action: str = "continue_dialog"
+    note: str = ""
+    enabled: bool = True
+

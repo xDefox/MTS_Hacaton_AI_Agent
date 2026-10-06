@@ -14,9 +14,11 @@
 | Точность расшифровки / суть | да | Whisper + `summary` |
 | Контроль: история + сценарии + правила | да | SQLite + `/scenarios` + `/routing_rules` |
 | Конфиденциальность (демо) | да | всё локально, без облака на демо |
-| CJM: уведомление Ивану | да | `data/notifications.jsonl` + опц. Telegram |
+| CJM: уведомление Ивану | да | notify jsonl + `GET /notifications` + опц. Telegram |
 | Усиление: аналитика | да | `GET /stats` |
 | Усиление: горячая линия | да | `POST /hotline` + правило |
+| Усиление: обучение на примерах | да | `training_examples` → промпт |
+| Комплаенс lite: аудит доступа | да | `GET /audit` |
 
 ## Сделано (к CP1)
 
@@ -65,8 +67,12 @@ TELEGRAM_CHAT_ID=
 - `GET /api/v1/stats` — аналитика
 - `GET|PUT|DELETE /api/v1/routing_rules` — правила маршрутизации
 - `GET|PUT|DELETE /api/v1/scenarios` — приветствие / FAQ
+- `GET|PUT|DELETE /api/v1/training_examples` — обучение на примерах
 - `POST /api/v1/hotline` — экстренный перевод на человека
 - `GET /api/v1/calls?critical_only=true` — история важных
+- `GET /api/v1/notifications` — лента уведомлений Ивану
+- `GET /api/v1/audit` — журнал доступа к карточкам/аудио
+- `PATCH /api/v1/calls/{id}` — ручная правка резюме/ответа
 
 ## Дальше
 

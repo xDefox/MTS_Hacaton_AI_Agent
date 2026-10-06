@@ -18,7 +18,7 @@ app = FastAPI(
         "Трек 1: ИИ-агент входящих звонков для Ивана. "
         "Локальный контур: Ollama LLM + Whisper STT + local TTS + SQLite."
     ),
-    version="1.5.0",
+    version="1.6.0",
 )
 
 app.add_middleware(

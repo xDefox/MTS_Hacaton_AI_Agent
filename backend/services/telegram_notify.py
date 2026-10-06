@@ -61,6 +61,24 @@ def append_local_notification(payload: dict[str, Any], settings: Settings) -> st
     return str(path)
 
 
+def list_notifications(settings: Settings | None = None, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Последние уведомления Ивану (CJM лента)."""
+    settings = settings or get_settings()
+    path = _notifications_path(settings)
+    if not path.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return list(reversed(rows[-limit:]))
+
+
 async def send_telegram_message(text: str, settings: Settings) -> bool:
     token = (settings.telegram_bot_token or "").strip()
     chat_id = (settings.telegram_chat_id or "").strip()

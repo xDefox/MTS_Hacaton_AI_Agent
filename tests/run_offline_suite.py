@@ -14,6 +14,7 @@ SUITE = [
     "tests/test_routing_matrix.py",
     "tests/test_api_contract.py",
     "tests/test_fallback_pipeline.py",
+    "tests/test_tz_control_plane.py",
     "tests/smoke_tz_backend.py",
 ]
 
