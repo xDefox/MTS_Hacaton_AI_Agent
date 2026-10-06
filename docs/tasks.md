@@ -1,6 +1,6 @@
 # AI Call Agent — Track 1
 
-> Ветка разработки бэка: `feature/backend`. В `main`: `backend/` + `frontend/`.
+> Ветка бэка: `feature/backend` (только `backend/`). В `main`: `backend/` + `frontend/`. Без `.env.example` в репозитории.
 
 ## Сделано
 
