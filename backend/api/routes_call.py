@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.schemas import (
     ActionRequired,
+    CallCorrectionIn,
     CallHistoryItem,
     CallHistoryList,
     CallRequest,
@@ -24,7 +25,13 @@ from backend.schemas import (
 )
 from backend.services.analytics import build_call_stats
 from backend.services.call_agent import process_incoming_call
-from backend.services.call_history import call_log_to_item, get_call_log, list_call_logs, save_call_log
+from backend.services.call_history import (
+    call_log_to_item,
+    get_call_log,
+    list_call_logs,
+    save_call_log,
+    update_call_log,
+)
 from backend.services.routing_rules import delete_rule, list_rules, upsert_rule
 from backend.services.scenarios import delete_scenario, list_scenarios, upsert_scenario
 from backend.services.speech_providers import SpeechError, synthesize_agent_audio, transcribe_bytes
@@ -204,14 +211,35 @@ def get_calls(
 
 @router.get("/calls/{call_id}", response_model=CallHistoryItem)
 def get_call_detail(call_id: int, db: Session = Depends(get_db)) -> CallHistoryItem:
+    from backend.services.access_audit import log_access
+
     row = get_call_log(db, call_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
+    log_access("view_call", call_id=call_id)
+    return call_log_to_item(row)
+
+
+@router.patch("/calls/{call_id}", response_model=CallHistoryItem)
+def patch_call(
+    call_id: int,
+    body: CallCorrectionIn,
+    db: Session = Depends(get_db),
+) -> CallHistoryItem:
+    """Ручная корректировка расшифровки / ответа ИИ / резюме (CJM)."""
+    from backend.services.access_audit import log_access
+
+    row = update_call_log(db, call_id, body.model_dump(exclude_unset=True))
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
+    log_access("correct_call", call_id=call_id, detail="manual_patch")
     return call_log_to_item(row)
 
 
 @router.get("/calls/{call_id}/audio")
 def get_call_audio(call_id: int, db: Session = Depends(get_db)) -> FileResponse:
+    from backend.services.access_audit import log_access
+
     row = get_call_log(db, call_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
@@ -221,6 +249,7 @@ def get_call_audio(call_id: int, db: Session = Depends(get_db)) -> FileResponse:
             status_code=404,
             detail="Audio not generated yet. Call process_call?with_audio=true or process_call_voice.",
         )
+    log_access("listen_audio", call_id=call_id, detail=path.name)
     media = "audio/wav" if path.suffix.lower() == ".wav" else "audio/ogg"
     return FileResponse(path, media_type=media, filename=path.name)
 

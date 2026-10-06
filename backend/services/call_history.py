@@ -50,6 +50,35 @@ def get_call_log(db: Session, call_id: int) -> CallLog | None:
     return db.get(CallLog, call_id)
 
 
+def update_call_log(db: Session, call_id: int, patch: dict) -> CallLog | None:
+    """Ручная корректировка карточки звонка (CJM этап 4)."""
+    row = get_call_log(db, call_id)
+    if row is None:
+        return None
+    allowed = {
+        "user_message",
+        "agent_response",
+        "summary",
+        "is_critical",
+        "priority",
+        "intent",
+        "action_required",
+        "caller_name",
+        "recommended_next_step",
+    }
+    changed = False
+    for key, value in patch.items():
+        if key not in allowed or value is None:
+            continue
+        setattr(row, key, value)
+        changed = True
+    if changed:
+        db.commit()
+        db.refresh(row)
+        logger.info("CallLog corrected id=%s fields=%s", call_id, list(patch.keys()))
+    return row
+
+
 def call_log_to_item(row: CallLog) -> CallHistoryItem:
     return CallHistoryItem(
         id=row.id,

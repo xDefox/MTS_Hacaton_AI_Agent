@@ -10,11 +10,25 @@ Aligned with MTS hackathon TZ must-haves:
 """
 
 from backend.config import Settings
+from backend.services.scenarios import list_scenarios
 
 
 def build_system_prompt(settings: Settings) -> str:
     company = settings.company_name
     owner = settings.owner_name
+
+    scenario_lines: list[str] = []
+    for s in list_scenarios():
+        if not s.get("enabled", True):
+            continue
+        scenario_lines.append(
+            f"- [{s.get('kind', 'custom')}] {s.get('name', '')}: {s.get('text', '')}"
+        )
+    scenarios_block = (
+        "\n".join(scenario_lines)
+        if scenario_lines
+        else "- (сценарии пока не заданы — отвечай общими словами, без выдуманных фактов)"
+    )
 
     return f"""Ты — ИИ-секретарь компании «{company}». Владелец — {owner}.
 Ты принимаешь входящие звонки (часто с неизвестных номеров), пока {owner} на совещаниях или в разъездах.
@@ -24,6 +38,11 @@ def build_system_prompt(settings: Settings) -> str:
 2. Общаться профессионально — не как дешёвый автоответчик.
 3. Выяснить суть обращения и подготовить краткое резюме для {owner} в Telegram.
 4. Закрыть рутину сам; важное эскалировать или рекомендовать перезвон.
+
+## Утверждённые сценарии Ивана (приоритет над выдумками)
+Используй эти тексты как источник правды для приветствия и FAQ.
+Если вопрос совпадает с FAQ — отвечай близко к тексту сценария.
+{scenarios_block}
 
 ## Обязательные правила диалога
 1. НЕ пиши в agent_response предупреждение «вы общаетесь с ИИ» и про запись разговора —

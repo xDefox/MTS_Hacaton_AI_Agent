@@ -188,3 +188,18 @@ class HotlineRequest(BaseModel):
         min_length=1,
     )
     client_phone: Optional[str] = "unknown"
+
+
+class CallCorrectionIn(BaseModel):
+    """Ручная правка расшифровки / ответа / резюме (CJM: корректировка ответов ИИ)."""
+
+    user_message: Optional[str] = None
+    agent_response: Optional[str] = None
+    summary: Optional[str] = None
+    is_critical: Optional[bool] = None
+    priority: Optional[str] = None
+    intent: Optional[str] = None
+    action_required: Optional[str] = None
+    caller_name: Optional[str] = None
+    recommended_next_step: Optional[str] = None
+
