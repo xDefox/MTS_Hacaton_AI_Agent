@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -21,10 +22,35 @@ from backend.schemas import (
 
 logger = logging.getLogger(__name__)
 
-# ТЗ / комплаенс: всегда до ответа (текст и голос/TTS)
+# ТЗ / комплаенс: ровно одно предупреждение перед ответом (текст и голос/TTS)
 AI_DISCLOSURE_PREFIX = (
     "Внимание: вы общаетесь с искусственным интеллектом. "
     "Разговор может записываться для передачи информации владельцу. "
+)
+
+# Типовые формулировки модели — срезаем с начала, чтобы не было дубля
+_DISCLOSURE_HEAD_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"^внимание:\s*вы общаетесь с искусственным интеллектом\.?\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^вы общаетесь с искусственным интеллектом\.?\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(r"^вы общаетесь с ии[^.]*\.?\s*", re.IGNORECASE),
+    re.compile(
+        r"^разговор может записываться[^.]*\.\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^ваш звонок может быть записан[^.]*\.\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^разговор может быть записан[^.]*\.\s*",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -32,12 +58,30 @@ class YandexLLMError(RuntimeError):
     """Raised when the model call or JSON parsing fails after retries."""
 
 
+def _strip_leading_disclosures(text: str) -> str:
+    """Убирает повторные предупреждения об ИИ/записи с начала реплики."""
+    cleaned = (text or "").strip()
+    changed = True
+    while changed and cleaned:
+        changed = False
+        for pattern in _DISCLOSURE_HEAD_PATTERNS:
+            updated = pattern.sub("", cleaned, count=1).lstrip(" \n\t—–-")
+            if updated != cleaned:
+                cleaned = updated.strip()
+                changed = True
+    # «Здравствуйте! Здравствуйте!» → одно
+    cleaned = re.sub(
+        r"^(здравствуйте[!?.]?\s*){2,}",
+        "Здравствуйте! ",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned
+
+
 def ensure_ai_disclosure(agent_response: str) -> str:
-    """Гарантированно ставит предупреждение перед ответом (и для TTS)."""
-    text = (agent_response or "").strip()
-    marker = "вы общаетесь с искусственным интеллектом"
-    if marker in text.lower():
-        return text
+    """Один канонический префикс + текст ответа без дублей."""
+    text = _strip_leading_disclosures(agent_response)
     if not text:
         return AI_DISCLOSURE_PREFIX.strip()
     return f"{AI_DISCLOSURE_PREFIX}{text}"
