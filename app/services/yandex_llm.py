@@ -8,9 +8,9 @@ import logging
 import time
 from typing import Any
 
-from backend.config import Settings, get_settings
-from backend.prompts.system_ivan import build_system_prompt
-from backend.schemas import (
+from app.config import Settings, get_settings
+from app.prompts.system_ivan import build_system_prompt
+from app.schemas import (
     ActionRequired,
     AgentLLMOutput,
     CallRequest,

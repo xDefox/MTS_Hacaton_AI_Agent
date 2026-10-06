@@ -34,7 +34,7 @@ copy .env.example .env
 5. Запуск API:
 
 ```bash
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 6. Swagger: http://127.0.0.1:8000/docs  
@@ -57,14 +57,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/process_call ^
 ## Структура
 
 ```
-backend/
+app/
   main.py                 # FastAPI entry
   config.py               # env settings
   schemas.py              # request/response contracts
   api/routes_call.py      # POST /api/v1/process_call
   prompts/system_ivan.py  # system prompt (Трек 1)
   services/yandex_llm.py  # YandexGPT + JSON parse + fallback
-frontend/                 # Flet / Telegram (партнёр)
+frontend/                 # Flet / Telegram (партнёр) — в main
 scripts/smoke_test.py
 ```
 

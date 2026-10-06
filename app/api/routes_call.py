@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
-from backend.schemas import CallHistoryItem, CallHistoryList, CallRequest, CallResponse
-from backend.services.call_history import call_log_to_item, get_call_log, list_call_logs, save_call_log
-from backend.services.yandex_llm import process_call_with_yandex
+from app.database import get_db
+from app.schemas import CallHistoryItem, CallHistoryList, CallRequest, CallResponse
+from app.services.call_history import call_log_to_item, get_call_log, list_call_logs, save_call_log
+from app.services.yandex_llm import process_call_with_yandex
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
 

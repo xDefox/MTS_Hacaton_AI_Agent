@@ -7,8 +7,8 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.models import CallLog
-from backend.schemas import CallHistoryItem, CallRequest, CallResponse
+from app.models import CallLog
+from app.schemas import CallHistoryItem, CallRequest, CallResponse
 
 logger = logging.getLogger(__name__)
 

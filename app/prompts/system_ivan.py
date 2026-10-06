@@ -9,7 +9,7 @@ Aligned with MTS hackathon TZ must-haves:
 - recording/processing notice (compliance awareness)
 """
 
-from backend.config import Settings
+from app.config import Settings
 
 
 def build_system_prompt(settings: Settings) -> str:

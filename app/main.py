@@ -3,9 +3,9 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routes_call import router as call_router
-from backend.config import get_settings
-from backend.database import init_db
+from app.api.routes_call import router as call_router
+from app.config import get_settings
+from app.database import init_db
 
 logging.basicConfig(
     level=logging.INFO,
