@@ -172,11 +172,15 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
     text_lower = request.user_message.lower()
     wants_human = any(
         phrase in text_lower
-        for phrase in ("соедините", "менеджер", "с человеком", "с иваном", "оператор")
+        for phrase in ("соедините", "с менеджером", "с человеком", "с иваном", "оператор")
     )
-    is_critical = wants_human or any(
-        word in text_lower
-        for word in ("срочно", "договор", "оплат", "жалоб", "мошен", "авария", "пилот")
+    is_junk = _is_non_business_junk(request.user_message) and not wants_human
+    is_critical = (not is_junk) and (
+        wants_human
+        or any(
+            word in text_lower
+            for word in ("срочно", "договор", "оплат", "жалоб", "мошен", "авария", "пилот")
+        )
     )
 
     if wants_human:
@@ -185,6 +189,18 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
         intent = Intent.escalation
         summary = "Звонящий запросил соединение с человеком. Требуется срочная эскалация."
         next_step = "Принять звонок / перезвонить немедленно"
+    elif is_junk:
+        agent_response = (
+            "Сейчас я принимаю рабочие обращения по компании. "
+            "Если есть деловой вопрос — кратко опишите его, пожалуйста."
+        )
+        action = ActionRequired.continue_dialog
+        intent = Intent.spam if any(
+            w in text_lower for w in ("продаём", "предлагаем", "скидк", "реклам")
+        ) else Intent.other
+        summary = f"Нерабочее/спам обращение, без эскалации. Текст: {request.user_message[:200]}"
+        next_step = "Игнорировать"
+        is_critical = False
     elif is_critical:
         agent_response = (
             "Понимаю важность вопроса. Зафиксировал обращение и передам владельцу для быстрого перезвона."
@@ -205,7 +221,11 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
     return CallResponse(
         agent_response=ensure_ai_disclosure(agent_response),
         is_critical=is_critical,
-        priority=Priority.critical if wants_human else (Priority.high if is_critical else Priority.normal),
+        priority=(
+            Priority.critical
+            if wants_human
+            else (Priority.high if is_critical else Priority.low if is_junk else Priority.normal)
+        ),
         intent=intent,
         action_required=action,
         summary=summary,
@@ -213,6 +233,83 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
         recommended_next_step=next_step,
         session_id=request.session_id,
         model="fallback",
+    )
+
+
+def _is_non_business_junk(text: str) -> bool:
+    """Оффтоп / холодные продажи — не к специалисту (если нет явной просьбы человека)."""
+    t = text.lower()
+    if any(
+        p in t
+        for p in (
+            "соедините",
+            "с менеджером",
+            "с человеком",
+            "с иваном",
+            "оператор",
+            "переведите на",
+        )
+    ):
+        return False
+    junk_markers = (
+        "стишок",
+        "стих",
+        "анекдот",
+        "поболтаем",
+        "поболтать",
+        "скучно",
+        "расскажи сказк",
+        "спой",
+        "угадай",
+        "продаём",
+        "продаем",
+        "предлагаем услуги",
+        "хотим предложить",
+        "скидк",
+        "директ",
+        "seo",
+        "продвижен",
+        "кредитн",
+        "розыгрыш",
+        "выигрыш",
+    )
+    return any(m in t for m in junk_markers)
+
+
+def _guard_non_business_escalation(request: CallRequest, response: CallResponse) -> CallResponse:
+    """Если модель ошиблась и эскалировала мусор — принудительно снижаем."""
+    if not _is_non_business_junk(request.user_message):
+        return response
+    if (
+        response.action_required != ActionRequired.transfer_to_human
+        and not response.is_critical
+    ):
+        return response
+
+    logger.warning(
+        "Guard: downgrade junk escalation session=%s action=%s critical=%s",
+        request.session_id,
+        response.action_required,
+        response.is_critical,
+    )
+    text_lower = request.user_message.lower()
+    intent = (
+        Intent.spam
+        if any(w in text_lower for w in ("прода", "предлага", "скидк", "реклам", "директ"))
+        else Intent.other
+    )
+    return response.model_copy(
+        update={
+            "is_critical": False,
+            "priority": Priority.low,
+            "intent": intent,
+            "action_required": ActionRequired.continue_dialog,
+            "recommended_next_step": "Игнорировать / не перезванивать",
+            "summary": (
+                f"Нерабочее обращение (оффтоп/спам), эскалация отменена guard'ом. "
+                f"Текст: {request.user_message[:200]}"
+            ),
+        }
     )
 
 
@@ -251,7 +348,7 @@ async def process_call_with_yandex(
             raw = await asyncio.to_thread(_run_yandex_sync, messages, settings)
             parsed = _parse_output(raw)
             caller_name = parsed.caller_name.strip() or None
-            return CallResponse(
+            response = CallResponse(
                 agent_response=ensure_ai_disclosure(parsed.agent_response),
                 is_critical=parsed.is_critical,
                 priority=parsed.priority,
@@ -263,6 +360,7 @@ async def process_call_with_yandex(
                 session_id=request.session_id,
                 model=f"{settings.yandex_model}:{settings.yandex_model_version}",
             )
+            return _guard_non_business_escalation(request, response)
         except Exception as exc:  # noqa: BLE001 — last attempt falls back
             last_error = exc
             logger.exception("YandexGPT attempt %s/%s failed: %s", attempt, attempts, exc)

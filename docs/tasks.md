@@ -15,6 +15,7 @@
 - [x] `GET /api/v1/calls/{id}/audio` — скачать ответ агента голосом (демо)
 - [x] Smoke: `tests/smoke_*.py` (test / history / voice / tts)
 - [x] Предупреждение «вы общаетесь с ИИ» + запись разговора — всегда перед `agent_response` (текст и TTS)
+- [x] Жёсткая маршрутизация: оффтоп/спам не к специалисту (промпт + guard) + `tests/smoke_hard_routing.py`
 - [x] Структура: `backend/` + `tests/` (без `frontend/` на этой ветке)
 
 ## ТЗ → продукт
