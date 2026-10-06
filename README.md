@@ -2,11 +2,11 @@
 
 ИИ-агент входящих звонков для IT-предпринимателя **Ивана Петрова**.
 
-Стек чекпоинта 1: **Python + FastAPI + YandexGPT (AI Studio)** + системный промпт по CJM/ТЗ.
+Стек: **Python + FastAPI + YandexGPT (AI Studio) + SQLite** + системный промпт по CJM/ТЗ.
 
 ## Что умеет сейчас
 
-`POST /api/v1/process_call` принимает текст реплики звонящего (позже — STT) и возвращает:
+`POST /api/v1/process_call` — реплика звонящего → ответ ИИ + запись в историю.
 
 | Поле | Смысл по ТЗ |
 |------|-------------|
@@ -15,11 +15,18 @@
 | `intent` | Категория (коммерция, жалоба, спам, эскалация…) |
 | `action_required` | `continue_dialog` / `transfer_to_human` / `offer_telegram_chat` / `callback_recommended` |
 | `summary` | Краткое резюме для Telegram Ивану |
+| `call_id` | ID записи в локальной истории |
+
+История звонков (ТЗ: контроль и управление):
+
+- `GET /api/v1/calls` — список (новые сверху)
+- `GET /api/v1/calls?critical_only=true` — только важные
+- `GET /api/v1/calls/{id}` — детали карточки
 
 ## Быстрый старт (≤ 5 минут)
 
 1. Python 3.10+
-2. Создайте каталог в [Yandex Cloud](https://console.yandex.cloud/), включите **AI Studio / Foundation Models**, получите API-ключ.
+2. Каталог в [Yandex Cloud](https://console.yandex.cloud/), AI Studio / Foundation Models, API-ключ.
 3. Установка:
 
 ```bash
@@ -40,10 +47,19 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 6. Swagger: http://127.0.0.1:8000/docs  
 7. Health: http://127.0.0.1:8000/health  
 
-### Smoke-тест трёх сценариев (лид / спам / «соедините с менеджером»)
+### Frontend (Flet)
+
+Код партнёра в `frontend/` (не меняем с бэкенда). Запуск UI:
 
 ```bash
-python scripts/smoke_test.py
+python frontend/app.py
+```
+
+### Smoke-тесты
+
+```bash
+python backend/scripts/smoke_test.py
+python backend/scripts/smoke_history.py
 ```
 
 ### Пример запроса
@@ -57,16 +73,28 @@ curl -X POST http://127.0.0.1:8000/api/v1/process_call ^
 ## Структура
 
 ```
-backend/
-  main.py                 # FastAPI entry
-  config.py               # env settings
-  schemas.py              # request/response contracts
-  api/routes_call.py      # POST /api/v1/process_call
-  prompts/system_ivan.py  # system prompt (Трек 1)
-  services/yandex_llm.py  # YandexGPT + JSON parse + fallback
+backend/                  # весь бэкенд Трека 1
+  main.py
+  config.py
+  database.py             # SQLite
+  models.py               # CallLog
+  schemas.py
+  api/routes_call.py
+  prompts/system_ivan.py
+  services/yandex_llm.py
+  services/call_history.py
+  scripts/smoke_test.py
+  scripts/smoke_history.py
 frontend/                 # Flet / Telegram (партнёр)
-scripts/smoke_test.py
+data/calls.db             # локально, не в git
+docs/                     # ТЗ, CJM, tasks.md
 ```
+
+## Данные и безопасность (прототип)
+
+- История в `data/calls.db` (SQLite), папка в `.gitignore`.
+- API-ключи только в `.env`, не в БД.
+- Для продакшена / презентации жюри: контур МТС, Postgres, auth, шифрование, аудит доступа.
 
 ## Коммиты
 
@@ -75,6 +103,5 @@ Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`.
 ## Дальше по ТЗ
 
 - Telegram-уведомление Ивану (резюме + расшифровка)
-- История звонков (SQLite)
 - SpeechKit STT/TTS
-- UI: сценарии / правила маршрутизации
+- UI: дашборд истории, сценарии / правила маршрутизации

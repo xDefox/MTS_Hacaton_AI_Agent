@@ -1,6 +1,10 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_DB_PATH = ROOT_DIR / "data" / "calls.db"
 
 
 class Settings(BaseSettings):
@@ -16,7 +20,6 @@ class Settings(BaseSettings):
     yc_api_key: str = ""
 
     yandex_model: str = "yandexgpt"
-    # Structured JSON output is supported on the release-candidate line.
     yandex_model_version: str = "rc"
     yandex_temperature: float = 0.3
     yandex_max_retries: int = 1
@@ -25,7 +28,8 @@ class Settings(BaseSettings):
     owner_name: str = "Иван Петров"
 
     tg_bot_token: str = "8628878694:AAFfJMsE7pqXNQ0dmLj9VoqUPyfRX1fS-kQ"
-
+    # Local SQLite for call history (ТЗ: контроль). Not for production PDn.
+    database_url: str = f"sqlite:///{DEFAULT_DB_PATH.as_posix()}"
 
 @lru_cache
 def get_settings() -> Settings:
