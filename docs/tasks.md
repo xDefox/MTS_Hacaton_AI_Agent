@@ -11,7 +11,8 @@
 - [x] `GET /api/v1/calls`, `?critical_only=true`, `GET /api/v1/calls/{id}`
 - [x] Сохранение после `process_call` / `process_call_voice` → `call_id`
 - [x] SpeechKit STT: `POST /api/v1/transcribe`, голос→агент `POST /api/v1/process_call_voice`
-- [x] Smoke: `tests/smoke_test.py`, `smoke_history.py`, `smoke_voice.py`
+- [x] SpeechKit TTS: озвучка `agent_response` → `data/tts/` + `GET /calls/{id}/audio`
+- [x] Smoke: `tests/smoke_test.py`, `smoke_history.py`, `smoke_voice.py`, `smoke_tts.py`
 - [x] Структура: бэк в `backend/` (фронт только в `main`)
 
 ## ТЗ → продукт
@@ -27,7 +28,7 @@
 | Безопасность прототипа | локальная БД, `.gitignore`, ключи в `.env` |
 | Онбординг ≤ 5 мин / UI сценариев | ещё нет (фронт) |
 | Telegram-уведомление Ивану | ещё нет |
-| SpeechKit Realtime / ответ голосом | STT sync есть; Realtime/TTS в трубку — дальше |
+| SpeechKit Realtime / ответ голосом | TTS sync + файл в `data/tts/` для демо; Realtime-стрим в трубку — дальше |
 
 ## Безопасность БД (хакатон)
 
@@ -44,12 +45,14 @@ uvicorn backend.main:app --reload --port 8000
 python tests/smoke_test.py
 python tests/smoke_history.py
 python tests/smoke_voice.py
+python tests/smoke_tts.py
 ```
 
-Демо голоса в Swagger: короткий `.ogg` (до ~1 МБ), например `data/demo_call.ogg`. Не загружать длинные песни.
+Демо голоса в Swagger: короткий `.ogg` (до ~1 МБ). Ответ агента: `process_call?with_audio=true` или `process_call_voice` → `audio_url` / `GET /api/v1/calls/{id}/audio`.  
+Файлы только локально в `data/tts/` (не в git). По ТЗ в проде — стрим в голосовой канал, без долгого хранения на диске демо.
 
 ## Дальше
 
 1. Telegram-уведомление Ивану (`summary` + transcript)  
 2. Стыковка с фронтом (`GET /calls`)  
-3. SpeechKit Realtime / TTS-ответ звонящему  
+3. SpeechKit Realtime / стрим TTS в телефонию (без файлов на диске)  

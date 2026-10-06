@@ -2,13 +2,15 @@
 
 ИИ-агент входящих звонков для IT-предпринимателя **Ивана Петрова**.
 
-Стек: **Python + FastAPI + YandexGPT + SpeechKit STT + SQLite** + системный промпт по CJM/ТЗ.
+Стек: **Python + FastAPI + YandexGPT + SpeechKit STT/TTS + SQLite** + системный промпт по CJM/ТЗ.
 
 ## Что умеет сейчас
 
-`POST /api/v1/process_call` — текст реплики → ответ ИИ + запись в историю.  
-`POST /api/v1/process_call_voice` — аудио (SpeechKit STT) → тот же агент + история.  
-`POST /api/v1/transcribe` — только голос → текст.
+`POST /api/v1/process_call` — текст → ответ ИИ (+ опц. TTS).  
+`POST /api/v1/process_call?with_audio=true` — то же + озвучка ответа.  
+`POST /api/v1/process_call_voice` — аудио → STT → агент → TTS ответа → история.  
+`POST /api/v1/transcribe` — только голос → текст.  
+`POST /api/v1/synthesize` — произвольный текст → речь.
 
 | Поле | Смысл по ТЗ |
 |------|-------------|
@@ -18,6 +20,7 @@
 | `intent` | Категория (коммерция, жалоба, спам, эскалация…) |
 | `action_required` | `continue_dialog` / `transfer_to_human` / `offer_telegram_chat` / `callback_recommended` |
 | `summary` | Краткое резюме для Telegram Ивану |
+| `audio_url` | Ссылка на озвучку ответа (демо TTS) |
 | `call_id` | ID записи в локальной истории |
 
 История звонков (ТЗ: контроль и управление):
@@ -55,15 +58,20 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 python tests/smoke_test.py
 python tests/smoke_history.py
 python tests/smoke_voice.py
+python tests/smoke_tts.py
 ```
 
 ### Голос (SpeechKit)
 
 - `POST /api/v1/transcribe` — аудио → текст  
-- `POST /api/v1/process_call_voice` — аудио → STT → агент → история  
+- `POST /api/v1/synthesize` — текст → речь  
+- `POST /api/v1/process_call_voice` — аудио → STT → агент → TTS  
+- `GET /api/v1/calls/{id}/audio` — скачать озвучку ответа  
 
-В Swagger загружайте **короткий** `.ogg` (OggOpus, до ~1 МБ / одна фраза).  
-Длинные песни sync STT не принимает. Без микрофона: `python tests/smoke_voice.py`.
+**Куда кладём аудио (демо):** `data/tts/call_{id}.ogg` — локально, в `.gitignore` через `data/`.  
+**По ТЗ в проде:** TTS стримится звонящему в реальном времени (трубка / Voice Agent), файлы на диск не копятся.
+
+В Swagger для STT — короткий `.ogg` (до ~1 МБ). Без микрофона: `python tests/smoke_voice.py` / `smoke_tts.py`.
 
 ### Пример запроса
 
@@ -86,12 +94,15 @@ backend/                  # весь бэкенд Трека 1
   prompts/system_ivan.py
   services/yandex_llm.py
   services/call_history.py
-  services/speechkit_stt.py  # STT (+ TTS для smoke)
+  services/speechkit_stt.py  # STT + TTS
+  services/tts_storage.py    # data/tts/ для демо
 tests/                    # smoke-тесты бэка
   smoke_test.py
   smoke_history.py
   smoke_voice.py
+  smoke_tts.py
 data/calls.db             # локально, не в git
+data/tts/*.ogg            # озвучка ответов (демо), не в git
 docs/                     # ТЗ, CJM, tasks.md
 ```
 
@@ -110,5 +121,5 @@ Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`.
 ## Дальше по ТЗ
 
 - Telegram-уведомление Ивану (резюме + расшифровка)
-- SpeechKit Realtime / ответ агента голосом (TTS в телефонию)
+- SpeechKit Realtime / стрим ответа в телефонию
 - UI: дашборд истории, сценарии / правила маршрутизации
