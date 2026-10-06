@@ -4,59 +4,56 @@
 
 ## Сделано (к CP1)
 
-- [x] YandexGPT + системный промпт Ивана + `POST /api/v1/process_call`
-- [x] Structured JSON: `agent_response`, `is_critical`, `priority`, `intent`, `action_required`, `summary`
-- [x] Fallback, если Yandex недоступен
-- [x] История звонков (SQLite `data/calls.db`) — ТЗ «контроль и управление»
-- [x] `GET /api/v1/calls`, `?critical_only=true`, `GET /api/v1/calls/{id}`
-- [x] Сохранение после `process_call` / `process_call_voice` → `call_id`
-- [x] SpeechKit STT: `POST /api/v1/transcribe`, голос→агент `POST /api/v1/process_call_voice`
-- [x] SpeechKit TTS: `POST /synthesize`, `process_call?with_audio=true`, озвучка → `data/tts/`
-- [x] `GET /api/v1/calls/{id}/audio` — скачать ответ агента голосом (демо)
-- [x] Smoke: `tests/smoke_*.py` (test / history / voice / tts)
-- [x] Предупреждение «вы общаетесь с ИИ» + запись разговора — всегда перед `agent_response` (текст и TTS)
-- [x] Жёсткая маршрутизация: оффтоп/спам не к специалисту (промпт + guard) + `tests/smoke_hard_routing.py`
-- [x] Структура: `backend/` + `tests/` (без `frontend/` на этой ветке)
+- [x] Локальный LLM: Ollama `qwen2.5:3b` + системный промпт Ивана (`LLM_PROVIDER=local`)
+- [x] Локальный STT: faster-whisper `tiny` (`STT_PROVIDER=local`)
+- [x] Локальный TTS: pyttsx3 / Windows SAPI (`TTS_PROVIDER=local`)
+- [x] Structured JSON + fallback + disclosure + hard-routing guard
+- [x] История звонков SQLite + API
+- [x] `process_call` / `process_call_voice` / `transcribe` / `synthesize`
+- [x] Smoke: `tests/smoke_*.py` + `smoke_hard_routing.py`
+- [x] Yandex оставлен опционально (`llm_provider=yandex`) — на демо жюри не используем
 
 ## ТЗ → продукт
 
 | Требование ТЗ / CJM | Статус |
 |---|---|
-| ИИ принимает входящие за Ивана | есть (текст и голос → агент) |
+| ИИ принимает входящие за Ивана | локальный LLM + Whisper |
 | Важное vs рутина | `is_critical`, фильтр `critical_only` |
-| Точность расшифровки / суть | SpeechKit STT + `summary` |
-| Ответ голосом звонящему | SpeechKit TTS (демо-файл); в проде — стрим |
-| Контроль: история звонков | SQLite + API |
-| Маршрутизация голос / чат / человек | промпт + `action_required` |
-| Уведомление о записи разговора | всегда префикс перед `agent_response` (текст + голос) |
-| Безопасность прототипа | локальная БД, `.gitignore`, ключи в `.env` |
-| Онбординг ≤ 5 мин / UI сценариев | ещё нет (фронт) |
-| Telegram-уведомление Ивану | ещё нет |
-| SpeechKit Realtime | дальше (сейчас sync STT/TTS) |
+| Точность расшифровки / суть | Whisper STT + `summary` |
+| Ответ голосом | локальный TTS → `data/tts/` |
+| Контроль: история | SQLite + API |
+| Маршрутизация голос / чат / человек | промпт + `action_required` + guard |
+| Без внешних API на демо | Ollama + Whisper + pyttsx3 на localhost |
+| Уведомление о записи | префикс перед `agent_response` |
 
-## Безопасность БД (хакатон)
+## Локальный запуск (обязательно)
 
-OK для демо: локальный файл, не в git, без ключей в таблице.  
-В презентации: прод = контур МТС, Postgres, auth, шифрование, аудит доступа.
-
-## API / запуск
-
+1. Установить [Ollama](https://ollama.com/download) для Windows.
+2. В терминале:
+```bash
+ollama pull qwen2.5:3b
+ollama serve
+```
+3. Backend:
 ```bash
 .\.venv\Scripts\activate
+pip install -r requirements.txt
 uvicorn backend.main:app --reload --port 8000
-# Swagger: http://127.0.0.1:8000/docs  (API 1.3.0+)
-
-python tests/smoke_test.py
-python tests/smoke_history.py
-python tests/smoke_voice.py
-python tests/smoke_tts.py
 ```
+4. Проверка: `GET /health` → `llm_provider=local`, `ollama_model=qwen2.5:3b`
+5. Smoke: `python tests/smoke_hard_routing.py`
 
-Демо: короткий `.ogg` в `process_call_voice`; озвучка ответа — `with_audio=true` → `audio_url` / `GET /calls/{id}/audio`.  
-Файлы в `data/tts/` локально (не в git). По ТЗ в проде — стрим в трубку, без долгого хранения.
+Опционально в `.env`:
+```
+LLM_PROVIDER=local
+STT_PROVIDER=local
+TTS_PROVIDER=local
+OLLAMA_MODEL=qwen2.5:3b
+WHISPER_MODEL_SIZE=tiny
+```
 
 ## Дальше
 
-1. Telegram-уведомление Ивану (`summary` + transcript)  
-2. Стыковка с фронтом (`GET /calls`)  
-3. SpeechKit Realtime / стрим TTS в телефонию  
+1. Прогон на живом Ollama + демо для жюри  
+2. Стыковка с фронтом  
+3. При наличии GPU — `OLLAMA_MODEL=qwen2.5:7b`  

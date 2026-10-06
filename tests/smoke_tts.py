@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 from fastapi.testclient import TestClient
 
 from backend.main import app
-from backend.services.tts_storage import audio_path_for_call
+from backend.services.tts_storage import find_call_audio
 
 
 def main() -> None:
@@ -36,8 +36,8 @@ def main() -> None:
 
     assert call_id, "call_id missing"
     assert audio_url, "audio_url missing — TTS failed?"
-    path = audio_path_for_call(call_id)
-    assert path.is_file() and path.stat().st_size > 0, f"missing file {path}"
+    path = find_call_audio(call_id)
+    assert path is not None and path.is_file() and path.stat().st_size > 0, f"missing audio for {call_id}"
 
     audio = client.get(audio_url)
     print("audio GET", audio.status_code, "bytes", len(audio.content))

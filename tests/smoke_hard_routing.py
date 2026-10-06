@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.schemas import ActionRequired, CallRequest  # noqa: E402
-from backend.services.yandex_llm import process_call_with_yandex  # noqa: E402
+from backend.services.call_agent import process_incoming_call  # noqa: E402
 
 MUST_NOT_ESCALATE = [
     CallRequest(
@@ -62,7 +62,7 @@ MUST_BE_CRITICAL_LEAD = [
 async def _run(req: CallRequest):
     print(f"--- {req.session_id} ---")
     print(f"IN: {req.user_message}")
-    resp = await process_call_with_yandex(req)
+    resp = await process_incoming_call(req)
     print(
         f"OUT: critical={resp.is_critical} intent={resp.intent} "
         f"action={resp.action_required} model={resp.model}"
