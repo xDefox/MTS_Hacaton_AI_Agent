@@ -41,7 +41,7 @@ async def process_call(data: CallRequest):
         is_critical = any(word in text_lower for word in ["срочно", "проблема", "мошенники", "списали", "авария"])
 
         response_text = "Здравствуйте! Я вас услышал, фиксирую обращение." if not is_critical \
-            .replace("Здравствуйте!", "Понимаю вашу тревогу, это важный вопрос.")
+            else "Понимаю вашу тревогу, это важный вопрос."
 
         return CallResponse(
             agent_response=response_text,
@@ -50,7 +50,7 @@ async def process_call(data: CallRequest):
             action_required="transfer_to_human" if is_critical else "continue_dialog"
         )
     except Exception as e:
-        raise HTTPException(status_code=500, str(detail=str(e)))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
