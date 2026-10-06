@@ -1,7 +1,5 @@
 # AI Call Agent — Track 1 (`feature/backend`)
 
-> **main пока не мержим.** Весь бэкенд в папке `backend/` (код + скрипты).
-
 ## Сделано
 
 - [x] Чекпоинт 1: YandexGPT + системный промпт Ивана + `POST /api/v1/process_call`
