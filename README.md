@@ -28,6 +28,7 @@
 - `GET /api/v1/calls` — список (новые сверху)
 - `GET /api/v1/calls?critical_only=true` — только важные
 - `GET /api/v1/calls/{id}` — детали карточки
+- `GET /api/v1/calls/{id}/audio` — озвучка ответа агента (если была сгенерирована)
 
 ## Быстрый старт (≤ 5 минут)
 
@@ -49,7 +50,7 @@ pip install -r requirements.txt
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-6. Swagger: http://127.0.0.1:8000/docs  
+6. Swagger: http://127.0.0.1:8000/docs  (API **1.3.0** — STT + TTS)  
 7. Health: http://127.0.0.1:8000/health  
 
 ### Smoke-тесты
@@ -73,13 +74,15 @@ python tests/smoke_tts.py
 
 В Swagger для STT — короткий `.ogg` (до ~1 МБ). Без микрофона: `python tests/smoke_voice.py` / `smoke_tts.py`.
 
-### Пример запроса
+### Пример запроса (текст + озвучка)
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/process_call ^
+curl -X POST "http://127.0.0.1:8000/api/v1/process_call?with_audio=true" ^
   -H "Content-Type: application/json" ^
   -d "{\"session_id\":\"demo-1\",\"user_message\":\"Соедините с менеджером, срочно по договору\",\"client_phone\":\"+79001112233\"}"
 ```
+
+В ответе будет `audio_url` — открой его в браузере, чтобы услышать голос агента.
 
 ## Структура
 

@@ -1,6 +1,6 @@
 # AI Call Agent — Track 1
 
-> Ветка бэка: `feature/backend` (только `backend/`). В `main`: `backend/` + `frontend/`. Без `.env.example` в репозитории.
+> Ветка бэка: `feature/backend` (только `backend/` + `tests/`). В `main`: ещё и `frontend/`. Фронт с бэка не трогаем.
 
 ## Сделано (к CP1)
 
@@ -11,9 +11,10 @@
 - [x] `GET /api/v1/calls`, `?critical_only=true`, `GET /api/v1/calls/{id}`
 - [x] Сохранение после `process_call` / `process_call_voice` → `call_id`
 - [x] SpeechKit STT: `POST /api/v1/transcribe`, голос→агент `POST /api/v1/process_call_voice`
-- [x] SpeechKit TTS: озвучка `agent_response` → `data/tts/` + `GET /calls/{id}/audio`
-- [x] Smoke: `tests/smoke_test.py`, `smoke_history.py`, `smoke_voice.py`, `smoke_tts.py`
-- [x] Структура: бэк в `backend/` (фронт только в `main`)
+- [x] SpeechKit TTS: `POST /synthesize`, `process_call?with_audio=true`, озвучка → `data/tts/`
+- [x] `GET /api/v1/calls/{id}/audio` — скачать ответ агента голосом (демо)
+- [x] Smoke: `tests/smoke_*.py` (test / history / voice / tts)
+- [x] Структура: `backend/` + `tests/` (без `frontend/` на этой ветке)
 
 ## ТЗ → продукт
 
@@ -22,13 +23,14 @@
 | ИИ принимает входящие за Ивана | есть (текст и голос → агент) |
 | Важное vs рутина | `is_critical`, фильтр `critical_only` |
 | Точность расшифровки / суть | SpeechKit STT + `summary` |
+| Ответ голосом звонящему | SpeechKit TTS (демо-файл); в проде — стрим |
 | Контроль: история звонков | SQLite + API |
 | Маршрутизация голос / чат / человек | промпт + `action_required` |
 | Уведомление о записи разговора | в системном промпте |
 | Безопасность прототипа | локальная БД, `.gitignore`, ключи в `.env` |
 | Онбординг ≤ 5 мин / UI сценариев | ещё нет (фронт) |
 | Telegram-уведомление Ивану | ещё нет |
-| SpeechKit Realtime / ответ голосом | TTS sync + файл в `data/tts/` для демо; Realtime-стрим в трубку — дальше |
+| SpeechKit Realtime | дальше (сейчас sync STT/TTS) |
 
 ## Безопасность БД (хакатон)
 
@@ -40,7 +42,7 @@ OK для демо: локальный файл, не в git, без ключе�
 ```bash
 .\.venv\Scripts\activate
 uvicorn backend.main:app --reload --port 8000
-# Swagger: http://127.0.0.1:8000/docs  (версия API 1.2.0+)
+# Swagger: http://127.0.0.1:8000/docs  (API 1.3.0+)
 
 python tests/smoke_test.py
 python tests/smoke_history.py
@@ -48,11 +50,11 @@ python tests/smoke_voice.py
 python tests/smoke_tts.py
 ```
 
-Демо голоса в Swagger: короткий `.ogg` (до ~1 МБ). Ответ агента: `process_call?with_audio=true` или `process_call_voice` → `audio_url` / `GET /api/v1/calls/{id}/audio`.  
-Файлы только локально в `data/tts/` (не в git). По ТЗ в проде — стрим в голосовой канал, без долгого хранения на диске демо.
+Демо: короткий `.ogg` в `process_call_voice`; озвучка ответа — `with_audio=true` → `audio_url` / `GET /calls/{id}/audio`.  
+Файлы в `data/tts/` локально (не в git). По ТЗ в проде — стрим в трубку, без долгого хранения.
 
 ## Дальше
 
 1. Telegram-уведомление Ивану (`summary` + transcript)  
 2. Стыковка с фронтом (`GET /calls`)  
-3. SpeechKit Realtime / стрим TTS в телефонию (без файлов на диске)  
+3. SpeechKit Realtime / стрим TTS в телефонию  
