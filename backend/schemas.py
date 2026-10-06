@@ -1,5 +1,4 @@
 from enum import Enum
-from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -88,31 +87,3 @@ class CallResponse(BaseModel):
     recommended_next_step: str
     session_id: str
     model: str = "yandexgpt"
-    call_id: Optional[int] = Field(
-        default=None,
-        description="ID записи в истории звонков (после сохранения в SQLite)",
-    )
-
-
-class CallHistoryItem(BaseModel):
-    """One call card for Ivan's dashboard / history list."""
-
-    id: int
-    session_id: str
-    caller_phone: str
-    user_message: str
-    agent_response: str
-    summary: str
-    is_critical: bool
-    priority: str
-    intent: str
-    action_required: str
-    caller_name: Optional[str] = None
-    recommended_next_step: str
-    model: str
-    created_at: datetime
-
-
-class CallHistoryList(BaseModel):
-    items: list[CallHistoryItem]
-    total: int
