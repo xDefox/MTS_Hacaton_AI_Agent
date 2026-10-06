@@ -45,7 +45,12 @@ class CallRequest(BaseModel, extra="allow"):
 
 
 class AgentLLMOutput(BaseModel):
-    """Strict JSON shape requested from YandexGPT (structured output)."""
+    """
+    Strict JSON shape for YandexGPT structured output.
+
+    Yandex requires EVERY field to be required (no optional properties).
+    Use empty string for unknown caller_name.
+    """
 
     agent_response: str = Field(
         ...,
@@ -55,18 +60,18 @@ class AgentLLMOutput(BaseModel):
         ...,
         description="True if Ivan must be notified urgently / should call back",
     )
-    priority: Priority = Field(default=Priority.normal)
-    intent: Intent = Field(default=Intent.other)
-    action_required: ActionRequired = Field(default=ActionRequired.continue_dialog)
+    priority: Priority = Field(..., description="critical | high | normal | low")
+    intent: Intent = Field(..., description="Request category")
+    action_required: ActionRequired = Field(..., description="Next routing action")
     summary: str = Field(
         ...,
         description="2–4 sentences for Ivan in Telegram: who called, about what, what to do",
     )
-    caller_name: Optional[str] = Field(default=None, description="Name if the caller introduced themselves")
-    recommended_next_step: str = Field(
-        default="Просмотреть резюме в Telegram",
-        description="Short next step for Ivan",
+    caller_name: str = Field(
+        ...,
+        description="Caller name if introduced, otherwise empty string",
     )
+    recommended_next_step: str = Field(..., description="Short next step for Ivan")
 
 
 class CallResponse(BaseModel):

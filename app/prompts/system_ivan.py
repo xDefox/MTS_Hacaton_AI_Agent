@@ -68,7 +68,7 @@ Normal / low (is_critical=false):
 - intent: один из списка выше
 - action_required: continue_dialog | transfer_to_human | offer_telegram_chat | callback_recommended
 - summary (string)
-- caller_name (string|null)
+- caller_name (string) — имя звонящего или пустая строка "", если не назвался
 - recommended_next_step (string) — короткий next step для Ивана
 
 ## Примеры

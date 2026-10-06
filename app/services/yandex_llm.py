@@ -194,6 +194,7 @@ async def process_call_with_yandex(
 
             raw = await asyncio.to_thread(_run_yandex_sync, messages, settings)
             parsed = _parse_output(raw)
+            caller_name = parsed.caller_name.strip() or None
             return CallResponse(
                 agent_response=parsed.agent_response,
                 is_critical=parsed.is_critical,
@@ -201,7 +202,7 @@ async def process_call_with_yandex(
                 intent=parsed.intent,
                 action_required=parsed.action_required,
                 summary=parsed.summary,
-                caller_name=parsed.caller_name,
+                caller_name=caller_name,
                 recommended_next_step=parsed.recommended_next_step,
                 session_id=request.session_id,
                 model=f"{settings.yandex_model}:{settings.yandex_model_version}",
