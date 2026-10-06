@@ -2,14 +2,18 @@
 
 ИИ-агент входящих звонков для IT-предпринимателя **Ивана Петрова**.
 
-Стек: **Python + FastAPI + YandexGPT (AI Studio) + SQLite** + системный промпт по CJM/ТЗ.
+Стек: **Python + FastAPI + YandexGPT + SpeechKit STT + SQLite** + системный промпт по CJM/ТЗ.  
+Фронт: **Flet / Telegram** в `frontend/` (партнёр).
 
 ## Что умеет сейчас
 
-`POST /api/v1/process_call` — реплика звонящего → ответ ИИ + запись в историю.
+`POST /api/v1/process_call` — текст реплики → ответ ИИ + запись в историю.  
+`POST /api/v1/process_call_voice` — аудио (SpeechKit STT) → тот же агент + история.  
+`POST /api/v1/transcribe` — только голос → текст.
 
 | Поле | Смысл по ТЗ |
 |------|-------------|
+| `transcript` | Распознанная речь (только voice-эндпоинты) |
 | `agent_response` | Что говорит агент звонящему |
 | `is_critical` / `priority` | Важное обращение или рутина |
 | `intent` | Категория (коммерция, жалоба, спам, эскалация…) |
@@ -48,7 +52,7 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 ### Frontend (Flet)
 
-Код партнёра в `frontend/` (не меняем с бэкенда). Запуск UI:
+Код партнёра в `frontend/`. Запуск UI:
 
 ```bash
 python frontend/app.py
@@ -59,7 +63,16 @@ python frontend/app.py
 ```bash
 python backend/scripts/smoke_test.py
 python backend/scripts/smoke_history.py
+python backend/scripts/smoke_voice.py
 ```
+
+### Голос (SpeechKit)
+
+- `POST /api/v1/transcribe` — аудио → текст  
+- `POST /api/v1/process_call_voice` — аудио → STT → агент → история  
+
+В Swagger загружайте **короткий** `.ogg` (OggOpus, до ~1 МБ / одна фраза).  
+Длинные песни sync STT не принимает. Без микрофона: `python backend/scripts/smoke_voice.py`.
 
 ### Пример запроса
 
@@ -72,7 +85,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/process_call ^
 ## Структура
 
 ```
-backend/                  # весь бэкенд Трека 1
+backend/                  # бэкенд Трека 1
   main.py
   config.py
   database.py             # SQLite
@@ -82,11 +95,14 @@ backend/                  # весь бэкенд Трека 1
   prompts/system_ivan.py
   services/yandex_llm.py
   services/call_history.py
+  services/speechkit_stt.py  # STT (+ TTS для smoke)
   scripts/smoke_test.py
   scripts/smoke_history.py
+  scripts/smoke_voice.py
 frontend/                 # Flet / Telegram (партнёр)
 data/calls.db             # локально, не в git
 docs/                     # ТЗ, CJM, tasks.md
+tests/                    # тесты фронта (партнёр)
 ```
 
 ## Данные и безопасность (прототип)
@@ -102,5 +118,5 @@ Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`.
 ## Дальше по ТЗ
 
 - Telegram-уведомление Ивану (резюме + расшифровка)
-- SpeechKit STT/TTS
+- SpeechKit Realtime / ответ агента голосом (TTS в телефонию)
 - UI: дашборд истории, сценарии / правила маршрутизации

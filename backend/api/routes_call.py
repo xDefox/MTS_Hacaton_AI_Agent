@@ -1,9 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
-from backend.schemas import CallHistoryItem, CallHistoryList, CallRequest, CallResponse
+from backend.schemas import (
+    CallHistoryItem,
+    CallHistoryList,
+    CallRequest,
+    CallResponse,
+    TranscribeResponse,
+    VoiceCallResponse,
+)
 from backend.services.call_history import call_log_to_item, get_call_log, list_call_logs, save_call_log
+from backend.services.speechkit_stt import SpeechKitError, guess_audio_format, transcribe_audio
 from backend.services.yandex_llm import process_call_with_yandex
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
@@ -25,6 +35,78 @@ async def process_call(
         return response
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/transcribe", response_model=TranscribeResponse)
+async def transcribe(
+    audio: UploadFile = File(..., description="Аудио: ogg/opus (рекомендуется) или raw lpcm"),
+    lang: str = Form("ru-RU"),
+    audio_format: Optional[Literal["oggopus", "lpcm"]] = Form(
+        None,
+        description="Если не указан — угадываем по имени файла",
+    ),
+    sample_rate_hertz: Optional[int] = Form(
+        None,
+        description="Только для lpcm: 48000 / 16000 / 8000",
+    ),
+) -> TranscribeResponse:
+    """SpeechKit STT: голос → текст (ТЗ: точность расшифровки)."""
+    raw = await audio.read()
+    fmt = audio_format or guess_audio_format(audio.filename, audio.content_type)
+    try:
+        text = await transcribe_audio(
+            raw,
+            audio_format=fmt,
+            lang=lang,
+            sample_rate_hertz=sample_rate_hertz,
+        )
+    except SpeechKitError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return TranscribeResponse(transcript=text, lang=lang, audio_format=fmt)
+
+
+@router.post("/process_call_voice", response_model=VoiceCallResponse)
+async def process_call_voice(
+    audio: UploadFile = File(..., description="Реплика звонящего (oggopus / lpcm)"),
+    session_id: str = Form(...),
+    client_phone: str = Form("unknown"),
+    lang: str = Form("ru-RU"),
+    audio_format: Optional[Literal["oggopus", "lpcm"]] = Form(None),
+    sample_rate_hertz: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+) -> VoiceCallResponse:
+    """
+    Голос → SpeechKit STT → YandexGPT агент → запись в историю.
+    Демо-цепочка трека 1 без отдельного микрофонного UI.
+    """
+    raw = await audio.read()
+    fmt = audio_format or guess_audio_format(audio.filename, audio.content_type)
+    try:
+        transcript = await transcribe_audio(
+            raw,
+            audio_format=fmt,
+            lang=lang,
+            sample_rate_hertz=sample_rate_hertz,
+        )
+    except SpeechKitError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    data = CallRequest(
+        session_id=session_id,
+        user_message=transcript,
+        client_phone=client_phone or "unknown",
+    )
+    try:
+        response = await process_call_with_yandex(data)
+        row = save_call_log(db, data, response)
+        response.call_id = row.id
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return VoiceCallResponse(
+        **response.model_dump(),
+        transcript=transcript,
+    )
 
 
 @router.get("/calls", response_model=CallHistoryList)
