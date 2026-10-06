@@ -34,10 +34,9 @@ python -m venv .venv
 # Windows:
 .venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env
 ```
 
-4. В `.env` укажите `YC_FOLDER_ID` и `YC_API_KEY`.
+4. Создайте `.env` в корне (файл не в git) и укажите `YC_FOLDER_ID` и `YC_API_KEY`.
 5. Запуск API:
 
 ```bash
