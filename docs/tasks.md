@@ -9,7 +9,7 @@
 
 | ТЗ (обязательное) | Бэк | Как закрыто |
 |---|---|---|
-| Простота ≤ 5 мин | да | локальный контур + README /health |
+| Простота ≤ 5 мин | да | `/ready` чеклист + README /health |
 | Маршрутизация голос / Telegram-чат / человек | да | `action_required` + `routing_rules` |
 | Точность расшифровки / суть | да | Whisper + `summary` |
 | Контроль: история + сценарии + правила | да | SQLite + `/scenarios` + `/routing_rules` |
@@ -47,7 +47,7 @@ ollama serve
 pip install -r requirements.txt
 uvicorn backend.main:app --reload --port 8000
 ```
-4. Проверка: `GET /health` → `llm_provider=local`, `ollama_model=qwen2.5:3b`
+4. Проверка: `GET /ready` → `ready=true` (и `demo_ready=true` когда Ollama с моделью)
 5. Smoke без Ollama: `python tests/run_offline_suite.py`
 6. Smoke LLM (когда Ollama готова): `python tests/smoke_hard_routing.py`
 
@@ -64,6 +64,7 @@ TELEGRAM_CHAT_ID=
 
 ## API для закрытия ТЗ (без Ollama)
 
+- `GET /ready` — чеклист готовности демо (≤5 мин)
 - `GET /api/v1/stats` — аналитика
 - `GET|PUT|DELETE /api/v1/routing_rules` — правила маршрутизации
 - `GET|PUT|DELETE /api/v1/scenarios` — приветствие / FAQ

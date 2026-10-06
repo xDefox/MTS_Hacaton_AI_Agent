@@ -258,6 +258,22 @@ ROUTING_CASES: list[dict[str, Any]] = [
         "expect_action": "transfer_to_human",
         "expect_intent": "escalation",
     },
+    {
+        "id": "faq-hours",
+        "layer": "rules",
+        "user_message": "Подскажите ваши часы работы на этой неделе",
+        "expect_critical": False,
+        "expect_action": "continue_dialog",
+        "expect_intent": "faq",
+    },
+    {
+        "id": "faq-schedule",
+        "layer": "rules",
+        "user_message": "Какой у вас график работы?",
+        "expect_critical": False,
+        "expect_action": "continue_dialog",
+        "expect_intent": "faq",
+    },
     # --- guard layer (junk markers / soft) ---
     {
         "id": "guard-seo-soft",

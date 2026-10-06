@@ -18,7 +18,7 @@ app = FastAPI(
         "Трек 1: ИИ-агент входящих звонков для Ивана. "
         "Локальный контур: Ollama LLM + Whisper STT + local TTS + SQLite."
     ),
-    version="1.6.0",
+    version="1.7.0",
 )
 
 app.add_middleware(
@@ -37,6 +37,9 @@ def on_startup() -> None:
     init_db()
 
 
+from backend.services.readiness import build_readiness, check_ollama
+
+
 @app.get("/health")
 def health_check():
     settings = get_settings()
@@ -44,6 +47,7 @@ def health_check():
     return {
         "status": "ok",
         "message": "API is running",
+        "version": app.version,
         "llm_provider": settings.llm_provider,
         "stt_provider": settings.stt_provider,
         "tts_provider": settings.tts_provider,
@@ -52,3 +56,11 @@ def health_check():
         "yandex_configured": bool(settings.yc_folder_id and settings.yc_api_key),
         "database": db_hint,
     }
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Чеклист готовности демо (ТЗ: подключение ≤ 5 минут)."""
+    settings = get_settings()
+    ollama = await check_ollama(settings)
+    return build_readiness(settings, ollama=ollama)

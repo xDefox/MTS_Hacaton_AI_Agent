@@ -112,6 +112,15 @@ DEFAULT_RULES: list[RoutingRule] = [
         action_required="continue_dialog",
     ),
     RoutingRule(
+        id="rule-faq-hours",
+        name="FAQ: часы работы",
+        description="Типовой FAQ — закрывать голосом без эскалации",
+        keywords=["часы работы", "график работы", "во сколько открыты", "режим работы"],
+        is_critical=False,
+        intent="faq",
+        action_required="continue_dialog",
+    ),
+    RoutingRule(
         id="rule-wrong-number",
         name="Ошибочный номер",
         description="Не туда позвонили",

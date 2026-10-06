@@ -8,7 +8,7 @@ from backend.config import Settings, get_settings
 from backend.schemas import ActionRequired, CallRequest, CallResponse, Intent, Priority
 from backend.services.local_llm import process_call_with_ollama
 from backend.services.routing_rules import match_rule
-from backend.services.yandex_llm import process_call_with_yandex
+from backend.services.yandex_llm import ensure_ai_disclosure, process_call_with_yandex
 
 logger = logging.getLogger(__name__)
 
@@ -84,4 +84,8 @@ async def process_incoming_call(
     else:
         logger.info("LLM provider=local model=%s", settings.ollama_model)
         response = await process_call_with_ollama(request, settings)
-    return apply_routing_rules(request, response)
+    response = apply_routing_rules(request, response)
+    # Гарантия disclosure на любом пути (mock / local / yandex / fallback)
+    return response.model_copy(
+        update={"agent_response": ensure_ai_disclosure(response.agent_response)}
+    )
