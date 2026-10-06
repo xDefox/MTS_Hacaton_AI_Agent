@@ -1,57 +1,91 @@
+"""Telegram-бот Ивана: /start = услуга подключена; отчёты шлёт бэкенд."""
+
 import asyncio
+import html
 import logging
-from aiogram import Bot, Dispatcher, types, F
+import os
+import time
+from pathlib import Path
+
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import requests
+from dotenv import load_dotenv
 
-TOKEN = "8628878694:AAFfJMsE7pqXNQ0dmLj9VoqUPyfRX1fS-kQ"  # Твой токен от @BotFather
-API_URL = "http://127.0.0.1:8000/api/v1/process_call"
+from backend.services.telegram_notify import add_subscriber
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+TOKEN = (os.getenv("TG_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+if not TOKEN:
+    raise SystemExit("Нет TG_BOT_TOKEN: положите токен в .env в корне репозитория")
+
+SERVICE_NAME = "AI менеджер звонков"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Локальный стейт для демонстрации настроек пользователя
 user_settings = {
     "status": "🟢 Активен (Ловит спам)",
-    "mode": "Строгий (Только важные)"
+    "mode": "Строгий (Только важные)",
 }
+_last_start: dict[int, float] = {}
 
 
-# Команда старт — главное меню
+def _home_keyboard() -> types.InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🟢 Услуга активна", callback_data="status_toggle")
+    builder.button(text="⚙️ Настройки сценариев", callback_data="settings_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def _register_chat(chat_id: int) -> None:
+    """Чтобы бэкенд знал, куда слать отчёты process_call / process_call_voice."""
+    add_subscriber(chat_id)
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🟢 Услуга 'ИИ-Агент' активна", callback_data="status_toggle")
-    builder.button(text="⚙️ Настройки сценариев", callback_data="settings_menu")
-    builder.button(text="🧪 Тест звонка", callback_data="trigger_sim")
-    builder.adjust(1)
+    chat_id = message.chat.id
+    now = time.monotonic()
+    if now - _last_start.get(chat_id, 0) < 3:
+        return
+    _last_start[chat_id] = now
 
+    _register_chat(chat_id)
     await message.answer(
-        "👋 **Добро пожаловать в МТС Умный Ассистент!**\n\n"
-        "Ваш персональный ИИ-секретарь настроен. Когда вы заняты на совещаниях, я буду принимать звонки от неизвестных номеров, отсеивать спам и присылать вам важные сводки.",
-        reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
+        f"✅ <b>Услуга подключена</b>\n\n"
+        f"«{html.escape(SERVICE_NAME)}» принимает входящие. "
+        f"Отчёт нейросети придёт сюда, когда на бэкенд поступит звонок "
+        f"(<code>/process_call</code> или <code>/process_call_voice</code>).",
+        reply_markup=_home_keyboard(),
+        parse_mode="HTML",
     )
 
 
-# Обработка нажатий на инлайн-кнопки
 @dp.callback_query(F.data == "status_toggle")
 async def toggle_status(callback: types.CallbackQuery):
     current = user_settings["status"]
     if "Активен" in current:
-        user_settings["status"] = "⏸️️ Приостановлен"
-        new_text = "🔴 **Услуга временно отключена.** ИИ-агент больше не перехватывает звонки."
+        user_settings["status"] = "⏸️ Приостановлен"
+        new_text = (
+            "🔴 <b>Услуга временно отключена.</b> "
+            "ИИ-агент больше не перехватывает звонки."
+        )
     else:
         user_settings["status"] = "🟢 Активен (Ловит спам)"
-        new_text = "🟢 **Услуга успешно активирована!** ИИ-агент снова на страже."
+        new_text = (
+            "🟢 <b>Услуга успешно активирована!</b> ИИ-агент снова на страже."
+        )
 
     builder = InlineKeyboardBuilder()
     builder.button(text="⚙️ Настройки сценариев", callback_data="settings_menu")
     builder.button(text="🔙 В главное меню", callback_data="back_home")
     builder.adjust(1)
-
-    await callback.message.edit_text(new_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await callback.message.edit_text(
+        new_text, reply_markup=builder.as_markup(), parse_mode="HTML"
+    )
     await callback.answer()
 
 
@@ -61,14 +95,13 @@ async def settings_menu(callback: types.CallbackQuery):
     builder.button(text="🔄 Сменить режим (Строгий / Мягкий)", callback_data="change_mode")
     builder.button(text="🔙 В главное меню", callback_data="back_home")
     builder.adjust(1)
-
     await callback.message.edit_text(
-        f"⚙️ **Панель управления ИИ-агентом**\n\n"
-        f"• Статус: `{user_settings['status']}`\n"
-        f"• Режим фильтрации: `{user_settings['mode']}`\n\n"
-        f"Выберите параметр для изменения:",
+        "⚙️ <b>Панель управления ИИ-агентом</b>\n\n"
+        f"• Статус: <code>{html.escape(user_settings['status'])}</code>\n"
+        f"• Режим фильтрации: <code>{html.escape(user_settings['mode'])}</code>\n\n"
+        "Выберите параметр для изменения:",
         reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -79,97 +112,26 @@ async def change_mode(callback: types.CallbackQuery):
         user_settings["mode"] = "🤝 Лояльный (Пропускать клиентов)"
     else:
         user_settings["mode"] = "Строгий (Только важные)"
-
     await callback.answer(f"Режим изменен на: {user_settings['mode']}", show_alert=True)
     await settings_menu(callback)
 
 
 @dp.callback_query(F.data == "back_home")
 async def back_home(callback: types.CallbackQuery):
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🟢 Услуга 'ИИ-Агент' активна", callback_data="status_toggle")
-    builder.button(text="⚙️ Настройки сценариев", callback_data="settings_menu")
-    builder.button(text="🧪 Тест звонка", callback_data="trigger_sim")
-    builder.adjust(1)
-
     await callback.message.edit_text(
-        "👋 **МТС Умный Ассистент (Главное меню)**\n\n"
-        "Выберите нужное действие:",
-        reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
+        f"✅ <b>Услуга подключена</b>\n\n"
+        f"«{html.escape(SERVICE_NAME)}» работает. Жду звонки с бэкенда.",
+        reply_markup=_home_keyboard(),
+        parse_mode="HTML",
     )
     await callback.answer()
-
-
-# Универсальная функция отправки карточки звонка
-async def send_call_alert(message_or_chat, phone: str, summary: str, is_critical: bool, ai_response: str):
-    builder = InlineKeyboardBuilder()
-
-    if is_critical:
-        alert_prefix = "⚠️ **ВАЖНЫЙ ЗВОНОК!**"
-        builder.button(text="📞 Перезвонить срочно", callback_data=f"call_back_{phone}")
-    else:
-        alert_prefix = "ℹ️ **Входящий вызов (спам отсеян)**"
-        builder.button(text="📝 Посмотреть детали", callback_data=f"details_{phone}")
-
-    builder.button(text="🔙 В главное меню", callback_data="back_home")
-    builder.adjust(1)
-
-    text = (
-        f"{alert_prefix}\n\n"
-        f"📱 **Номер:** `{phone}`\n"
-        f"📋 **Резюме ИИ:** {summary}\n"
-        f"🤖 **Что ответил робот:** _{ai_response}_"
-    )
-
-    if isinstance(message_or_chat, types.Message):
-        await message_or_chat.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-    else:
-        await bot.send_message(message_or_chat.id, text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-
-
-# Общая логика отправки запроса на бэкенд
-async def execute_simulation(target_message: types.Message):
-    payload = {
-        "session_id": "session_hackathon_01",
-        "client_phone": "+375 (29) 555-35-35",
-        "user_message": "Здравствуйте, мне срочно нужно купить партию вашего софта, перезвоните мне до пятницы."
-    }
-
-    try:
-        response = requests.post(API_URL, json=payload, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            await send_call_alert(
-                message_or_chat=target_message,
-                phone=payload["client_phone"],
-                summary=data["summary"],
-                is_critical=data["is_critical"],
-                ai_response=data["agent_response"]
-            )
-        else:
-            await target_message.answer(f"⚠️ Ошибка бэкенда: {response.status_code} - {response.text}")
-    except Exception as e:
-        await target_message.answer(f"❌ Ошибка соединения с FastAPI бэкендом: {e}")
-
-
-# Обработка нажатия на инлайн-кнопку «Тест звонка»
-@dp.callback_query(F.data == "trigger_sim")
-async def trigger_sim_callback(callback: types.CallbackQuery):
-    await callback.message.answer("🧪 Запускаю симуляцию входящего звонка через бэкенд...")
-    await execute_simulation(callback.message)
-    await callback.answer()
-
-
-# Обработка текстовой команды /simulate_call
-@dp.message(Command("simulate_call"))
-async def cmd_simulate(message: types.Message):
-    await message.answer("🧪 Симуляция вызова запущена...")
-    await execute_simulation(message)
 
 
 async def main():
-    print("Бот запущен и готов к работе...")
+    logging.info(
+        "Бот слушает /start. Отчёты приходят только с бэкенда "
+        "(process_call / process_call_voice)."
+    )
     await dp.start_polling(bot)
 
 

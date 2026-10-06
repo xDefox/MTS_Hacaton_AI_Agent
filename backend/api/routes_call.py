@@ -1,6 +1,7 @@
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
@@ -14,14 +15,27 @@ from backend.schemas import (
 )
 from backend.services.call_history import call_log_to_item, get_call_log, list_call_logs, save_call_log
 from backend.services.speechkit_stt import SpeechKitError, guess_audio_format, transcribe_audio
+from backend.services.telegram_notify import add_subscriber, notify_call_report, payload_from_response
 from backend.services.yandex_llm import process_call_with_yandex
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
 
 
+class TelegramSubscribe(BaseModel):
+    chat_id: int = Field(..., description="Telegram chat_id Ивана после /start")
+
+
+@router.post("/telegram/subscribe")
+def telegram_subscribe(body: TelegramSubscribe) -> dict:
+    """Бот регистрирует чат, куда слать отчёты по реальным звонкам."""
+    add_subscriber(body.chat_id)
+    return {"ok": True, "chat_id": body.chat_id}
+
+
 @router.post("/process_call", response_model=CallResponse)
 async def process_call(
     data: CallRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> CallResponse:
     """
@@ -32,6 +46,13 @@ async def process_call(
         response = await process_call_with_yandex(data)
         row = save_call_log(db, data, response)
         response.call_id = row.id
+        background_tasks.add_task(
+            notify_call_report,
+            **payload_from_response(
+                response,
+                phone=data.client_phone or "unknown",
+            ),
+        )
         return response
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -67,6 +88,7 @@ async def transcribe(
 
 @router.post("/process_call_voice", response_model=VoiceCallResponse)
 async def process_call_voice(
+    background_tasks: BackgroundTasks,
     audio: UploadFile = File(..., description="Реплика звонящего (oggopus / lpcm)"),
     session_id: str = Form(...),
     client_phone: str = Form("unknown"),
@@ -100,6 +122,14 @@ async def process_call_voice(
         response = await process_call_with_yandex(data)
         row = save_call_log(db, data, response)
         response.call_id = row.id
+        background_tasks.add_task(
+            notify_call_report,
+            **payload_from_response(
+                response,
+                phone=client_phone or "unknown",
+                transcript=transcript,
+            ),
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

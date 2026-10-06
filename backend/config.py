@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     owner_name: str = "Иван Петров"
 
     tg_bot_token: str = ""
+    tg_chat_id: str = ""
     # Local SQLite for call history (ТЗ: контроль). Not for production PDn.
     database_url: str = f"sqlite:///{DEFAULT_DB_PATH.as_posix()}"
 

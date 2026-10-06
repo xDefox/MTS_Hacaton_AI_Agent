@@ -1,6 +1,11 @@
 """Брендинг МТС и константы UI для фронтенда."""
 
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # Фирменная палитра МТС
 MTS_RED = "#E30611"        # основной красный МТС
