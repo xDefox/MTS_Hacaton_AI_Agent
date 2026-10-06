@@ -1,32 +1,51 @@
 # AI Call Agent — Track 1 (`feature/backend`)
 
-> **main не мержим пока.** Вся работа бэка в папке `backend/`.
+> **main пока не мержим.** Весь бэкенд в папке `backend/` (код + скрипты).
 
-## Статус
+## Сделано
 
-- [x] Чекпоинт 1: YandexGPT + системный промпт + `POST /api/v1/process_call`
-- [x] История звонков (SQLite) — ТЗ «контроль и управление»
-- [x] Код бэкенда в папке `backend/` (для будущего разделения backend / frontend в main)
-- [x] `frontend/` нет в этой ветке (остаётся в `main`)
+- [x] Чекпоинт 1: YandexGPT + системный промпт Ивана + `POST /api/v1/process_call`
+- [x] Structured JSON: `agent_response`, `is_critical`, `priority`, `intent`, `action_required`, `summary`
+- [x] Fallback, если Yandex недоступен
+- [x] История звонков (SQLite `data/calls.db`) — ТЗ «контроль и управление»
+- [x] `GET /api/v1/calls`, `?critical_only=true`, `GET /api/v1/calls/{id}`
+- [x] Сохранение после каждого `process_call` → `call_id`
+- [x] Smoke-тесты: `backend/scripts/smoke_test.py`, `backend/scripts/smoke_history.py`
+- [x] Структура: весь бэк в `backend/`, `frontend/` в этой ветке нет (живёт в `main`)
 
 ## ТЗ → продукт
 
-| Требование ТЗ | Статус |
+| Требование ТЗ / CJM | Статус |
 |---|---|
-| Контроль: история звонков | `call_logs` + `GET /api/v1/calls` |
-| Суть обращения | `summary` + `user_message` |
-| Важное vs рутина | `is_critical`, `?critical_only=true` |
-| Карточка для Ивана | `GET /api/v1/calls/{id}` |
-| Маршрутизация голос/чат/человек | в промпте + `action_required` |
-| Безопасность (прототип) | локальный `data/calls.db`, `.gitignore`, ключи только в `.env` |
+| ИИ принимает входящие за Ивана | есть (текст → агент) |
+| Суть обращения / резюме | `summary` + `user_message` |
+| Важное vs рутина | `is_critical`, фильтр `critical_only` |
+| Контроль: история звонков | SQLite + API |
+| Маршрутизация голос / чат / человек | промпт + `action_required` |
+| Уведомление о записи разговора | в системном промпте |
+| Безопасность прототипа | локальная БД, `.gitignore`, ключи в `.env` |
 | Онбординг ≤ 5 мин / UI сценариев | ещё нет (фронт) |
-| Telegram-уведомление | ещё нет |
+| Telegram-уведомление Ивану | ещё нет |
+| SpeechKit голос | ещё нет |
 
-## API
+## Безопасность БД (хакатон)
 
-Запуск: `uvicorn backend.main:app --reload --port 8000`
+OK для демо: локальный файл, не в git, без ключей в таблице.  
+В презентации: прод = контур МТС, Postgres, auth, шифрование, аудит доступа.
+
+## API / запуск
 
 ```bash
-python scripts/smoke_test.py
-python scripts/smoke_history.py
+.\.venv\Scripts\activate
+uvicorn backend.main:app --reload --port 8000
+# Swagger: http://127.0.0.1:8000/docs
+
+python backend/scripts/smoke_test.py
+python backend/scripts/smoke_history.py
 ```
+
+## Дальше
+
+1. Telegram-уведомление после звонка  
+2. Стыковка с фронтом (`GET /calls`)  
+3. Merge в `main` (backend / frontend раздельно) — когда решите  

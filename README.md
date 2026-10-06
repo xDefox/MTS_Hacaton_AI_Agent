@@ -43,7 +43,7 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ### Smoke-тест трёх сценариев (лид / спам / «соедините с менеджером»)
 
 ```bash
-python scripts/smoke_test.py
+python backend/scripts/smoke_test.py
 ```
 
 ### Пример запроса
@@ -67,8 +67,8 @@ backend/
   prompts/system_ivan.py  # system prompt (Трек 1)
   services/yandex_llm.py
   services/call_history.py
-scripts/smoke_test.py
-scripts/smoke_history.py
+backend/scripts/smoke_test.py
+backend/scripts/smoke_history.py
 ```
 
 ## Коммиты
