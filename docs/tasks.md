@@ -11,7 +11,7 @@
 - [x] `GET /api/v1/calls`, `?critical_only=true`, `GET /api/v1/calls/{id}`
 - [x] Сохранение после `process_call` / `process_call_voice` → `call_id`
 - [x] SpeechKit STT: `POST /api/v1/transcribe`, голос→агент `POST /api/v1/process_call_voice`
-- [x] Smoke: `smoke_test.py`, `smoke_history.py`, `smoke_voice.py`
+- [x] Smoke: `tests/smoke_test.py`, `smoke_history.py`, `smoke_voice.py`
 - [x] Структура: бэк в `backend/` (фронт только в `main`)
 
 ## ТЗ → продукт
@@ -41,9 +41,9 @@ OK для демо: локальный файл, не в git, без ключе�
 uvicorn backend.main:app --reload --port 8000
 # Swagger: http://127.0.0.1:8000/docs  (версия API 1.2.0+)
 
-python backend/scripts/smoke_test.py
-python backend/scripts/smoke_history.py
-python backend/scripts/smoke_voice.py
+python tests/smoke_test.py
+python tests/smoke_history.py
+python tests/smoke_voice.py
 ```
 
 Демо голоса в Swagger: короткий `.ogg` (до ~1 МБ), например `data/demo_call.ogg`. Не загружать длинные песни.

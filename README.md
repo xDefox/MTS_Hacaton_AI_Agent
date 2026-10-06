@@ -61,9 +61,9 @@ python frontend/app.py
 ### Smoke-тесты
 
 ```bash
-python backend/scripts/smoke_test.py
-python backend/scripts/smoke_history.py
-python backend/scripts/smoke_voice.py
+python tests/smoke_test.py
+python tests/smoke_history.py
+python tests/smoke_voice.py
 ```
 
 ### Голос (SpeechKit)
@@ -72,7 +72,7 @@ python backend/scripts/smoke_voice.py
 - `POST /api/v1/process_call_voice` — аудио → STT → агент → история  
 
 В Swagger загружайте **короткий** `.ogg` (OggOpus, до ~1 МБ / одна фраза).  
-Длинные песни sync STT не принимает. Без микрофона: `python backend/scripts/smoke_voice.py`.
+Длинные песни sync STT не принимает. Без микрофона: `python tests/smoke_voice.py`.
 
 ### Пример запроса
 
@@ -96,13 +96,14 @@ backend/                  # бэкенд Трека 1
   services/yandex_llm.py
   services/call_history.py
   services/speechkit_stt.py  # STT (+ TTS для smoke)
-  scripts/smoke_test.py
-  scripts/smoke_history.py
-  scripts/smoke_voice.py
 frontend/                 # Flet / Telegram (партнёр)
 data/calls.db             # локально, не в git
 docs/                     # ТЗ, CJM, tasks.md
-tests/                    # тесты фронта (партнёр)
+tests/                    # smoke бэка + тесты фронта
+  smoke_test.py
+  smoke_history.py
+  smoke_voice.py
+  test_service_page.py
 ```
 
 ## Данные и безопасность (прототип)
