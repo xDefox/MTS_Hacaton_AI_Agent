@@ -2,7 +2,8 @@
 
 ИИ-агент входящих звонков для IT-предпринимателя **Ивана Петрова**.
 
-Стек: **Python + FastAPI + YandexGPT + SpeechKit STT/TTS + SQLite** + системный промпт по CJM/ТЗ.
+Стек: **Python + FastAPI + локальный Ollama (Qwen2.5) + Whisper STT + local TTS + SQLite**.  
+По умолчанию **без внешних API** (контур под требования жюри МТС). Системный промпт по CJM/ТЗ.
 
 ## Что умеет сейчас
 
@@ -43,15 +44,17 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-4. Создайте `.env` в корне (файл не в git) и укажите `YC_FOLDER_ID` и `YC_API_KEY`.
-5. Запуск API:
+4. Создайте `.env` при необходимости (по умолчанию уже local):
+   `LLM_PROVIDER=local`, `STT_PROVIDER=local`, `TTS_PROVIDER=local`, `OLLAMA_MODEL=qwen2.5:3b`.
+5. Установите [Ollama](https://ollama.com/download), затем `ollama pull qwen2.5:3b`.
+6. Запуск API:
 
 ```bash
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-6. Swagger: http://127.0.0.1:8000/docs  (API **1.3.0** — STT + TTS)  
-7. Health: http://127.0.0.1:8000/health  
+7. Swagger: http://127.0.0.1:8000/docs  (API **1.4.0**)  
+8. Health: http://127.0.0.1:8000/health → `llm_provider=local`
 
 ### Smoke-тесты
 
