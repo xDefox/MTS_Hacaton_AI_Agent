@@ -47,6 +47,14 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 6. Swagger: http://127.0.0.1:8000/docs  
 7. Health: http://127.0.0.1:8000/health  
 
+### Frontend (Flet)
+
+Код партнёра в `frontend/` (не меняем с бэкенда). Запуск UI:
+
+```bash
+python frontend/app.py
+```
+
 ### Smoke-тесты
 
 ```bash
