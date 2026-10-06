@@ -28,14 +28,17 @@
 
 - `GET /api/v1/calls` — список (новые сверху)
 - `GET /api/v1/calls?critical_only=true` — только важные
+- `GET /api/v1/calls?session_id=...` — реплики одной сессии
 - `GET /api/v1/calls/{id}` — детали карточки
+- `PATCH /api/v1/calls/{id}` — ручная правка резюме/ответа
 - `GET /api/v1/calls/{id}/audio` — озвучка ответа агента (если была сгенерирована)
+- `GET /api/v1/notifications` / `GET /api/v1/audit` / `GET /api/v1/stats`
+- `GET /ready` — чеклист готовности демо (≤ 5 мин)
 
 ## Быстрый старт (≤ 5 минут)
 
 1. Python 3.10+
-2. Каталог в [Yandex Cloud](https://console.yandex.cloud/), AI Studio / Foundation Models, API-ключ.
-3. Установка:
+2. Установка:
 
 ```bash
 python -m venv .venv
@@ -44,38 +47,41 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-4. Создайте `.env` при необходимости (по умолчанию уже local):
-   `LLM_PROVIDER=local`, `STT_PROVIDER=local`, `TTS_PROVIDER=local`, `OLLAMA_MODEL=qwen2.5:3b`.
-5. Установите [Ollama](https://ollama.com/download), затем `ollama pull qwen2.5:3b`.
-6. Запуск API:
+3. Установите [Ollama](https://ollama.com/download), затем:
+```bash
+ollama pull qwen2.5:3b
+ollama serve
+```
+4. (Опционально) `.env`: `LLM_PROVIDER=local`, `STT_PROVIDER=local`, `TTS_PROVIDER=local`.
+5. Запуск API:
 
 ```bash
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-7. Swagger: http://127.0.0.1:8000/docs  (API **1.4.0**)  
+6. Swagger: http://127.0.0.1:8000/docs  
+7. Готовность: http://127.0.0.1:8000/ready → `ready=true`, после pull модели `demo_ready=true`  
 8. Health: http://127.0.0.1:8000/health → `llm_provider=local`
 
 ### Smoke-тесты
 
 ```bash
-python tests/smoke_test.py
-python tests/smoke_history.py
-python tests/smoke_voice.py
-python tests/smoke_tts.py
+python tests/run_offline_suite.py
+# когда Ollama готова:
+python tests/smoke_hard_routing.py
 ```
 
-### Голос (SpeechKit)
+### Голос (локально по умолчанию)
 
-- `POST /api/v1/transcribe` — аудио → текст  
-- `POST /api/v1/synthesize` — текст → речь  
+- `POST /api/v1/transcribe` — аудио → текст (Whisper)  
+- `POST /api/v1/synthesize` — текст → речь (pyttsx3)  
 - `POST /api/v1/process_call_voice` — аудио → STT → агент → TTS  
 - `GET /api/v1/calls/{id}/audio` — скачать озвучку ответа  
 
-**Куда кладём аудио (демо):** `data/tts/call_{id}.ogg` — локально, в `.gitignore` через `data/`.  
+**Куда кладём аудио (демо):** `data/tts/call_{id}.wav` — локально, в `.gitignore` через `data/`.  
 **По ТЗ в проде:** TTS стримится звонящему в реальном времени (трубка / Voice Agent), файлы на диск не копятся.
 
-В Swagger для STT — короткий `.ogg` (до ~1 МБ). Без микрофона: `python tests/smoke_voice.py` / `smoke_tts.py`.
+В Swagger для STT — короткий `.ogg`/`.wav`. Без микрофона: `python tests/test_speech_session.py`.
 
 ### Пример запроса (текст + озвучка)
 

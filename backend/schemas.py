@@ -37,7 +37,7 @@ class CallRequest(BaseModel, extra="allow"):
     """Incoming turn from frontend / telephony (STT text)."""
 
     session_id: str = Field(..., description="Call / dialog session id")
-    user_message: str = Field(..., min_length=1, description="Caller utterance (or STT transcript)")
+    user_message: str = Field(..., min_length=1, max_length=4000, description="Caller utterance (or STT transcript)")
     client_phone: Optional[str] = Field(default="unknown", description="Caller phone if known")
     dialog_history: Optional[list[dict[str, str]]] = Field(
         default=None,

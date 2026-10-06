@@ -208,10 +208,16 @@ async def process_call_voice(
 @router.get("/calls", response_model=CallHistoryList)
 def get_calls(
     critical_only: bool = Query(False, description="Только важные (is_critical)"),
+    session_id: Optional[str] = Query(None, description="Фильтр по сессии звонка"),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> CallHistoryList:
-    rows = list_call_logs(db, critical_only=critical_only, limit=limit)
+    rows = list_call_logs(
+        db,
+        critical_only=critical_only,
+        session_id=session_id,
+        limit=limit,
+    )
     items = [call_log_to_item(row) for row in rows]
     return CallHistoryList(items=items, total=len(items))
 

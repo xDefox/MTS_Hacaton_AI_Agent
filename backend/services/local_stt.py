@@ -48,7 +48,9 @@ def transcribe_audio_local(audio: bytes, *, language: str = "ru") -> str:
         raise LocalSTTError("Empty audio payload.")
 
     model = _get_model()
-    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+    # RIFF/WAVE → .wav, иначе пробуем как контейнер (.ogg / generic)
+    suffix = ".wav" if audio[:4] == b"RIFF" else ".ogg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(audio)
         path = Path(tmp.name)
 

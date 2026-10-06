@@ -274,6 +274,30 @@ ROUTING_CASES: list[dict[str, Any]] = [
         "expect_action": "continue_dialog",
         "expect_intent": "faq",
     },
+    {
+        "id": "complex-sla",
+        "layer": "rules",
+        "user_message": "Нужно обсудить SLA, NDA и этапы оплаты по договору",
+        "expect_critical": True,
+        "expect_action": "offer_telegram_chat",
+        "expect_intent": "commercial",
+    },
+    {
+        "id": "complex-integration",
+        "layer": "rules",
+        "user_message": "Готовим детальное ТЗ на интеграцию с нашей 1С",
+        "expect_critical": True,
+        "expect_action": "offer_telegram_chat",
+        "expect_intent": "commercial",
+    },
+    {
+        "id": "complex-kp",
+        "layer": "rules",
+        "user_message": "Пришлите коммерческое предложение на пилот",
+        "expect_critical": True,
+        "expect_action": "offer_telegram_chat",
+        "expect_intent": "commercial",
+    },
     # --- guard layer (junk markers / soft) ---
     {
         "id": "guard-seo-soft",

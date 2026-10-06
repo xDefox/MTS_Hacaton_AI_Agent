@@ -39,10 +39,18 @@ def save_call_log(db: Session, request: CallRequest, response: CallResponse) -> 
     return row
 
 
-def list_call_logs(db: Session, *, critical_only: bool = False, limit: int = 100) -> list[CallLog]:
+def list_call_logs(
+    db: Session,
+    *,
+    critical_only: bool = False,
+    session_id: str | None = None,
+    limit: int = 100,
+) -> list[CallLog]:
     stmt = select(CallLog).order_by(CallLog.created_at.desc()).limit(limit)
     if critical_only:
         stmt = stmt.where(CallLog.is_critical.is_(True))
+    if session_id:
+        stmt = stmt.where(CallLog.session_id == session_id)
     return list(db.scalars(stmt).all())
 
 
