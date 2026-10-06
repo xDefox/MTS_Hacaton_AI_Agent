@@ -16,6 +16,21 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # local = Ollama+Whisper+local TTS (default for MTS contour demo)
+    # yandex = external YandexGPT/SpeechKit (legacy / optional)
+    llm_provider: str = "local"
+    stt_provider: str = "local"
+    tts_provider: str = "local"
+
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:3b"
+    ollama_temperature: float = 0.2
+    ollama_timeout_sec: float = 120.0
+
+    whisper_model_size: str = "tiny"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
+
     yc_folder_id: str = ""
     yc_api_key: str = ""
 
@@ -27,7 +42,7 @@ class Settings(BaseSettings):
     company_name: str = "IT-компания Ивана Петрова"
     owner_name: str = "Иван Петров"
 
-    # SpeechKit TTS voice for agent replies (demo)
+    # SpeechKit TTS voice (only if tts_provider=yandex)
     tts_voice: str = "alena"
     tts_lang: str = "ru-RU"
 
