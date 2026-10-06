@@ -1,4 +1,34 @@
-.idea/
+# Environment / secrets
+.env
+.env.local
+*.pem
+
+# Python
 __pycache__/
-*.pyc
-info
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Runtime / local data
+data/
+*.db
+*.sqlite3
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+info/
