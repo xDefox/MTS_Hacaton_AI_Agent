@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -18,7 +17,6 @@ class RoutingRule:
     id: str
     name: str
     description: str
-    # if any keyword in user_message (lowercase) → force fields
     keywords: list[str]
     is_critical: bool | None = None
     intent: str | None = None
@@ -26,12 +24,26 @@ class RoutingRule:
     enabled: bool = True
 
 
+# Порядок важен: первое совпадение побеждает.
 DEFAULT_RULES: list[RoutingRule] = [
     RoutingRule(
         id="rule-spam-ads",
         name="Холодные продажи / реклама",
         description="Не эскалировать спам и чужие услуги",
-        keywords=["директ", "скидк", "продвижен", "предлагаем услуги", "продаём", "продаем"],
+        keywords=[
+            "директ",
+            "скидк",
+            "продвижен",
+            "предлагаем услуги",
+            "хотим предложить",
+            "продаём",
+            "продаем",
+            "seo",
+            "кредитн",
+            "розыгрыш",
+            "выигрыш",
+            "контекстн",
+        ],
         is_critical=False,
         intent="spam",
         action_required="continue_dialog",
@@ -40,16 +52,69 @@ DEFAULT_RULES: list[RoutingRule] = [
         id="rule-offtopic",
         name="Оффтоп",
         description="Стихи, болтовня — не к специалисту",
-        keywords=["стишок", "стих", "анекдот", "поболтаем", "поболтать", "скучно"],
+        keywords=[
+            "стишок",
+            "стих",
+            "анекдот",
+            "поболтаем",
+            "поболтать",
+            "скучно",
+            "расскажи сказк",
+            "спой",
+            "угадай",
+            "развлеки",
+            "расскажи что-нибудь",
+        ],
         is_critical=False,
         intent="other",
         action_required="continue_dialog",
     ),
     RoutingRule(
+        id="rule-jailbreak",
+        name="Jailbreak / injection",
+        description="Попытки сломать промпт — не эскалировать",
+        keywords=[
+            "игнорируй",
+            "забудь кто ты",
+            "system prompt",
+            "системный промпт",
+            "без правил",
+            "пиши пароль",
+        ],
+        is_critical=False,
+        intent="other",
+        action_required="continue_dialog",
+    ),
+    RoutingRule(
+        id="rule-wrong-number",
+        name="Ошибочный номер",
+        description="Не туда позвонили",
+        keywords=["ошибся номером", "не туда позвонил", "не тот номер", "ошибся телефоном"],
+        is_critical=False,
+        intent="wrong_number",
+        action_required="continue_dialog",
+    ),
+    RoutingRule(
+        id="rule-complaint",
+        name="Жалоба / инцидент",
+        description="Важное через callback, не всегда live-перевод",
+        keywords=["жалоб", "претензи", "инцидент", "возмутительно"],
+        is_critical=True,
+        intent="complaint",
+        action_required="callback_recommended",
+    ),
+    RoutingRule(
         id="rule-human",
         name="Горячая линия",
         description="Явная просьба человека → transfer_to_human",
-        keywords=["соедините с менеджером", "соедините с иваном", "с человеком", "оператор"],
+        keywords=[
+            "соедините с менеджером",
+            "соедините с иваном",
+            "с человеком",
+            "оператор",
+            "живой человек",
+            "переведите на",
+        ],
         is_critical=True,
         intent="escalation",
         action_required="transfer_to_human",
@@ -57,23 +122,48 @@ DEFAULT_RULES: list[RoutingRule] = [
 ]
 
 
-def _ensure_file() -> Path:
-    RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not RULES_PATH.is_file():
-        save_rules(DEFAULT_RULES)
-    return RULES_PATH
-
-
-def load_rules() -> list[RoutingRule]:
-    path = _ensure_file()
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    return [RoutingRule(**item) for item in raw]
-
-
 def save_rules(rules: list[RoutingRule]) -> None:
     RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = [asdict(r) for r in rules]
     RULES_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_rules_raw() -> list[RoutingRule]:
+    raw = json.loads(RULES_PATH.read_text(encoding="utf-8"))
+    return [RoutingRule(**item) for item in raw]
+
+
+def merge_missing_defaults() -> None:
+    if not RULES_PATH.is_file():
+        save_rules(DEFAULT_RULES)
+        return
+    existing = load_rules_raw()
+    have = {r.id for r in existing}
+    added = False
+    for rule in DEFAULT_RULES:
+        if rule.id not in have:
+            existing.append(rule)
+            added = True
+    if added:
+        save_rules(existing)
+
+
+def _ensure_file() -> None:
+    RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not RULES_PATH.is_file():
+        save_rules(DEFAULT_RULES)
+        return
+    merge_missing_defaults()
+
+
+def load_rules() -> list[RoutingRule]:
+    _ensure_file()
+    return load_rules_raw()
+
+
+def reset_rules_to_defaults() -> None:
+    """Для тестов: полностью перезаписать файл дефолтами."""
+    save_rules(DEFAULT_RULES)
 
 
 def list_rules() -> list[dict[str, Any]]:

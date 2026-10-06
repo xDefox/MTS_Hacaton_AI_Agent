@@ -46,7 +46,8 @@ pip install -r requirements.txt
 uvicorn backend.main:app --reload --port 8000
 ```
 4. Проверка: `GET /health` → `llm_provider=local`, `ollama_model=qwen2.5:3b`
-5. Smoke: `python tests/smoke_hard_routing.py`
+5. Smoke без Ollama: `python tests/test_routing_matrix.py`
+6. Smoke LLM (когда Ollama готова): `python tests/smoke_hard_routing.py`
 
 Опционально в `.env`:
 ```
