@@ -24,9 +24,9 @@ app = FastAPI(
     title="MTS AI Agent API",
     description=(
         "Трек 1: ИИ-агент входящих звонков для Ивана. "
-        "SpeechKit STT + YandexGPT + SQLite-история (ТЗ)."
+        "SpeechKit STT/TTS + YandexGPT + SQLite-история (ТЗ)."
     ),
-    version="1.2.0",
+    version="1.3.0",
     lifespan=lifespan,
 )
 

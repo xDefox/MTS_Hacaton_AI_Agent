@@ -119,10 +119,11 @@ def main(page: ft.Page):
         page.update()
 
     def open_telegram(_=None):
-        """Открывает бота в Telegram: Flet + системный браузер (Windows)."""
-        page.launch_url(TELEGRAM_BOT_URL)
-        if getattr(page, "session", None) is not None:
-            webbrowser.open(TELEGRAM_BOT_URL)
+        """Открывает бота в Telegram."""
+        if not hasattr(page, "session"):
+            page.launch_url(TELEGRAM_BOT_URL)
+            return
+        webbrowser.open(TELEGRAM_BOT_URL)
 
     # --- Согласие, Telegram-бот и кнопка подключения ---------------------
     def on_consent_change(e):
@@ -389,7 +390,6 @@ def main(page: ft.Page):
         TELEGRAM_OPEN_TEXT,
         icon=ft.Icons.TELEGRAM,
         url=TELEGRAM_BOT_URL,
-        data=TELEGRAM_BOT_URL,
         style=ft.ButtonStyle(
             bgcolor=MTS_RED,
             overlay_color=MTS_RED_DARK,

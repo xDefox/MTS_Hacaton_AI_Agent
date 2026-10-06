@@ -1,13 +1,17 @@
-"""Уведомления Ивану в Telegram после реального process_call / process_call_voice."""
+"""Уведомления Ивану в Telegram после process_call / process_call_voice."""
 
 from __future__ import annotations
 
 import html
 import logging
+import os
 
 import httpx
+from dotenv import load_dotenv
 
 from backend.config import ROOT_DIR, get_settings
+
+load_dotenv(ROOT_DIR / ".env")
 
 logger = logging.getLogger(__name__)
 
@@ -23,20 +27,24 @@ def add_subscriber(chat_id: int) -> None:
     SUBSCRIBERS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with SUBSCRIBERS_PATH.open("a", encoding="utf-8") as fh:
         fh.write(f"{chat_id}\n")
+    logger.info("Telegram subscriber added: %s", chat_id)
 
 
 def list_subscribers() -> list[int]:
     ids: set[int] = set()
-    extra = (get_settings().tg_chat_id or "").strip()
+    extra = (
+        os.getenv("TG_CHAT_ID")
+        or (get_settings().tg_chat_id or "")
+    ).strip()
     if extra:
         for part in extra.replace(";", ",").split(","):
             part = part.strip()
-            if part.isdigit() or (part.startswith("-") and part[1:].isdigit()):
+            if part.lstrip("-").isdigit():
                 ids.add(int(part))
     if SUBSCRIBERS_PATH.exists():
         for line in SUBSCRIBERS_PATH.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line.isdigit() or (line.startswith("-") and line[1:].isdigit()):
+            if line.lstrip("-").isdigit():
                 ids.add(int(line))
     return sorted(ids)
 
@@ -53,31 +61,23 @@ def format_call_report(
     caller_name: str | None = None,
     transcript: str | None = None,
 ) -> str:
-    who = html.escape(caller_name or "")
-    who = f" ({who})" if who else ""
-    title = "⚠️ ВАЖНЫЙ ЗВОНОК" if is_critical else "ℹ️ Входящий вызов"
-    parts = [
-        "📋 <b>Отчёт нейросети</b>",
-        f"{title}{who}",
+    """Короткий шаблон отчёта для чата Ивана."""
+    flag = "⚠️ Важно" if is_critical else "ℹ️ Звонок"
+    who = html.escape(caller_name) if caller_name else ""
+    head = f"{flag}" + (f" · {who}" if who else "")
+    lines = [
+        f"{head}",
+        f"Номер: {html.escape(phone or 'unknown')}",
         "",
-        f"📱 Номер: <code>{html.escape(phone or 'unknown')}</code>",
-        f"🏷 Intent: <code>{html.escape(str(intent))}</code> · "
-        f"приоритет: <code>{html.escape(str(priority))}</code>",
-    ]
-    if transcript:
-        parts += ["", "<b>Расшифровка</b>", html.escape(transcript)]
-    parts += [
-        "",
-        "<b>Резюме</b>",
         html.escape(summary or "—"),
         "",
-        "<b>Что ответил агент</b>",
-        html.escape(agent_response or "—"),
-        "",
-        "<b>Что сделать</b>",
-        html.escape(recommended_next_step or "—"),
+        f"Агент: {html.escape(agent_response or '—')}",
     ]
-    return "\n".join(parts)
+    if recommended_next_step:
+        lines += ["", f"Дальше: {html.escape(recommended_next_step)}"]
+    if transcript:
+        lines += ["", f"Расшифровка: {html.escape(transcript)}"]
+    return "\n".join(lines)
 
 
 async def notify_call_report(
@@ -92,10 +92,13 @@ async def notify_call_report(
     caller_name: str | None = None,
     transcript: str | None = None,
 ) -> None:
-    token = (get_settings().tg_bot_token or "").strip()
+    token = (os.getenv("TG_BOT_TOKEN") or get_settings().tg_bot_token or "").strip()
     chats = list_subscribers()
-    if not token or not chats:
-        logger.info("Telegram skip: token=%s subscribers=%s", bool(token), chats)
+    if not token:
+        logger.warning("Telegram skip: нет TG_BOT_TOKEN")
+        return
+    if not chats:
+        logger.warning("Telegram skip: нет подписчиков. Иван должен нажать /start")
         return
 
     text = format_call_report(
@@ -112,19 +115,14 @@ async def notify_call_report(
     url = f"{TELEGRAM_API}/bot{token}/sendMessage"
     async with httpx.AsyncClient(timeout=20.0) as client:
         for chat_id in chats:
-            try:
-                resp = await client.post(
-                    url,
-                    json={
-                        "chat_id": chat_id,
-                        "text": text,
-                        "parse_mode": "HTML",
-                    },
-                )
-                if resp.status_code != 200:
-                    logger.warning("Telegram %s: %s", chat_id, resp.text[:300])
-            except httpx.RequestError:
-                logger.exception("Telegram send failed chat_id=%s", chat_id)
+            resp = await client.post(
+                url,
+                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            )
+            if resp.status_code != 200:
+                logger.warning("Telegram %s: %s", chat_id, resp.text[:400])
+            else:
+                logger.info("Telegram report sent to %s", chat_id)
 
 
 def payload_from_response(response, *, phone: str, transcript: str | None = None) -> dict:
