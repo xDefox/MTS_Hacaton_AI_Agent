@@ -5,6 +5,8 @@ Flet 0.86 · стиль МТС · адаптив под десктоп, план
 Запуск:  python -m frontend.app
 """
 
+import webbrowser
+
 import flet as ft
 
 from .assests import (
@@ -15,6 +17,7 @@ from .assests import (
     MTS_BG,
     MTS_WHITE,
     SERVICE_NAME,
+    HEADER_CONNECT_SUBTITLE,
     SERVICE_TAGLINE,
     SERVICE_ICON,
     SERVICE_DESCRIPTION,
@@ -23,13 +26,12 @@ from .assests import (
     MORE_BUTTON_TEXT,
     CONSENT_TEXT,
     CONSENT_DOCS,
-    TELEGRAM_TOGGLE_TEXT,
+    TELEGRAM_OPEN_TEXT,
     TELEGRAM_TOGGLE_HINT,
+    TELEGRAM_BOT_URL,
     FEATURES_TITLE,
     FEATURES,
     ROUTING_TITLE,
-    ROUTING_VOICE,
-    ROUTING_CHAT,
     ROUTING_VOICE_LABEL,
     ROUTING_CHAT_LABEL,
     CONNECTED_STATUS,
@@ -44,10 +46,31 @@ MOBILE_PLATFORMS = {
 }
 
 
+def _square_checkbox(**kwargs) -> ft.Checkbox:
+    """Квадратный пустой чекбокс (не кружок Material 3)."""
+    return ft.Checkbox(
+        shape=ft.RoundedRectangleBorder(radius=2),
+        border_side=ft.BorderSide(1.5, MTS_GRAY),
+        fill_color={
+            ft.ControlState.DEFAULT: MTS_WHITE,
+            ft.ControlState.SELECTED: MTS_RED,
+        },
+        check_color=MTS_WHITE,
+        active_color=MTS_RED,
+        **kwargs,
+    )
+
+
 def main(page: ft.Page):
     page.title = "МТС — Подключение услуги"
     page.bgcolor = MTS_BG
     page.padding = 0
+    page.scroll = ft.ScrollMode.AUTO
+    page.theme = ft.Theme(
+        checkbox_theme=ft.CheckboxTheme(
+            shape=ft.RoundedRectangleBorder(radius=2),
+        ),
+    )
 
     # Размер окна задаём только на десктопе: на мобильных размерами
     # управляет система, а на маленьких экранах фиксированный размер — баг.
@@ -67,27 +90,26 @@ def main(page: ft.Page):
     def connect_service(_=None):
         # Без согласия на обработку данных услуга не подключается
         if not consent_checkbox.value:
-            consent_checkbox.error = "Подтвердите согласие, чтобы подключить услугу"
+            consent_checkbox.error = True
+            consent_error.visible = True
             page.update()
             return
-        consent_checkbox.error = None
+        consent_checkbox.error = False
+        consent_error.visible = False
         close_dialog()
-        # Показываем панель функций вместо карточки подключения
-        service_card.visible = False
+        header_subtitle.value = f"| {SERVICE_NAME}"
+        page.title = f"МТС — {SERVICE_NAME}"
         features_panel.visible = True
-        tg_note = (
-            " · Telegram-бот подключён"
-            if tg["connected"]
-            else " · Telegram-бот: не подключён"
-        )
+        service_card.visible = False
+        stage.controls.clear()
+        stage.controls.append(features_panel)
         status_bar.content = ft.Row(
             [
-                ft.Icon(ft.Icons.CHECK_CIRCLE, color=MTS_RED, size=18),
+                ft.Icon(ft.Icons.CHECK, color=MTS_RED, size=18),
                 ft.Text(
-                    f"{CONNECTED_STATUS}: «{SERVICE_NAME}»{tg_note}",
+                    f"{CONNECTED_STATUS}: «{SERVICE_NAME}»",
                     color=MTS_DARK,
                     weight=ft.FontWeight.W_600,
-                    expand=True,   # текст занимает строку и переносится
                 ),
             ],
             spacing=8,
@@ -96,60 +118,40 @@ def main(page: ft.Page):
         )
         page.update()
 
+    def open_telegram(_=None):
+        """Открывает бота в Telegram: Flet + системный браузер (Windows)."""
+        page.launch_url(TELEGRAM_BOT_URL)
+        if getattr(page, "session", None) is not None:
+            webbrowser.open(TELEGRAM_BOT_URL)
+
     # --- Согласие, Telegram-бот и кнопка подключения ---------------------
     def on_consent_change(e):
         """Кнопка «Подключить» тухнет, пока не принята оферта."""
         agreed = bool(e.control.value)
         connect_btn.opacity = 1.0 if agreed else 0.4
         if agreed:
-            consent_checkbox.error = None
+            consent_checkbox.error = False
+            consent_error.visible = False
         page.update()
 
-    consent_checkbox = ft.Checkbox(
-        label=CONSENT_TEXT,
+    consent_checkbox = _square_checkbox(
         value=False,
-        active_color=MTS_RED,
         on_change=on_consent_change,
     )
-
-    # Простая кнопка подключения Telegram-бота (тумблер по клику)
-    tg = {"connected": False}
-    tg_buttons = []
-    tg_hints = []
-
-    def toggle_tg(_=None):
-        """Подключает/отключает Telegram-бота — меняет вид обеих кнопок."""
-        tg["connected"] = not tg["connected"]
-        for btn in tg_buttons:
-            btn.style.bgcolor = MTS_DARK if tg["connected"] else MTS_RED
-            btn.icon = ft.Icon(
-                ft.Icons.CHECK_CIRCLE if tg["connected"] else ft.Icons.ADD,
-                color=MTS_WHITE,
-            )
-        for hint in tg_hints:
-            hint.value = (
-                "Бот подключён — уведомления и саммари будут приходить"
-                if tg["connected"]
-                else TELEGRAM_TOGGLE_HINT
-            )
-        page.update()
-
-    def _make_tg_button() -> ft.FilledButton:
-        return ft.FilledButton(
-            TELEGRAM_TOGGLE_TEXT,
-            icon=ft.Icon(ft.Icons.ADD, color=MTS_WHITE),
-            style=ft.ButtonStyle(
-                bgcolor=MTS_RED,
-                overlay_color=MTS_RED_DARK,
-                color=MTS_WHITE,
-            ),
-            on_click=lambda e: toggle_tg(),
-        )
-
-    tg_btn_dialog = _make_tg_button()
-    tg_hint_dialog = ft.Text(TELEGRAM_TOGGLE_HINT, size=12, color=MTS_GRAY)
-    tg_buttons.append(tg_btn_dialog)
-    tg_hints.append(tg_hint_dialog)
+    consent_error = ft.Text(
+        "Подтвердите согласие, чтобы подключить услугу",
+        size=12,
+        color=MTS_RED,
+        visible=False,
+    )
+    consent_row = ft.Row(
+        [
+            consent_checkbox,
+            ft.Text(CONSENT_TEXT, size=13, color=MTS_DARK, expand=True),
+        ],
+        spacing=8,
+        vertical_alignment=ft.CrossAxisAlignment.START,
+    )
 
     connect_btn = ft.FilledButton(
         CONNECT_BUTTON_TEXT,
@@ -183,27 +185,26 @@ def main(page: ft.Page):
                 *[
                     ft.Row(
                         [
-                            ft.Icon(ft.Icons.CHECK_CIRCLE, color=MTS_RED, size=18),
-                            ft.Text(f, size=14, color=MTS_DARK),
+                            ft.Icon(ft.Icons.CHECK, color=MTS_RED, size=18),
+                            ft.Text(f, size=14, color=MTS_DARK, expand=True),
                         ],
                         spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.START,
                     )
                     for f in SERVICE_FEATURES
                 ],
                 ft.Divider(height=1, color="#E8E8EA"),
-                consent_checkbox,
+                consent_row,
+                consent_error,
                 ft.Text(
                     CONSENT_DOCS,
                     size=12,
                     color=MTS_GRAY,
                 ),
-                ft.Divider(height=1, color="#E8E8EA"),
-                tg_btn_dialog,
-                tg_hint_dialog,
             ],
             spacing=12,
             tight=True,
-            scroll=ft.ScrollMode.AUTO,  # контент прокручивается на узких экранах
+            scroll=ft.ScrollMode.AUTO,
         ),
     )
 
@@ -228,9 +229,9 @@ def main(page: ft.Page):
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
-    # --- Квадратная карточка услуги -------------------------------------
+    # --- Карточка услуги (высота по контенту, без обрезки текста) --------
     header_icon_box = ft.Container(
-        height=96,
+        height=88,
         bgcolor=MTS_RED,
         border_radius=ft.BorderRadius(
             top_left=24,
@@ -239,7 +240,7 @@ def main(page: ft.Page):
             bottom_right=0,
         ),
         alignment=ft.Alignment.CENTER,
-        content=ft.Text(SERVICE_ICON, size=44),
+        content=ft.Text(SERVICE_ICON, size=40),
     )
 
     title_text = ft.Text(
@@ -266,7 +267,6 @@ def main(page: ft.Page):
 
     service_card = ft.Container(
         width=CARD_SIZE,
-        height=CARD_SIZE,
         border_radius=24,
         bgcolor=MTS_WHITE,
         shadow=ft.BoxShadow(
@@ -275,18 +275,12 @@ def main(page: ft.Page):
             color="#1D1D1B22",
             offset=ft.Offset(0, 6),
         ),
-        border=ft.Border(
-            top=ft.BorderSide(width=1, color="#E8E8EA"),
-            right=ft.BorderSide(width=1, color="#E8E8EA"),
-            bottom=ft.BorderSide(width=1, color="#E8E8EA"),
-            left=ft.BorderSide(width=1, color="#E8E8EA"),
-        ),
+        border=ft.Border.all(1, "#E8E8EA"),
         content=ft.Column(
             [
                 header_icon_box,
                 ft.Container(
-                    padding=ft.Padding.all(16),
-                    expand=True,
+                    padding=ft.Padding.symmetric(horizontal=20, vertical=16),
                     content=ft.Column(
                         [
                             title_text,
@@ -297,11 +291,10 @@ def main(page: ft.Page):
                                 text_align=ft.TextAlign.CENTER,
                                 max_lines=2,
                             ),
-                            ft.Container(expand=True),
                             more_button,
                         ],
-                        spacing=8,
-                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=10,
+                        alignment=ft.MainAxisAlignment.START,
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         tight=True,
                     ),
@@ -315,49 +308,28 @@ def main(page: ft.Page):
 
     # --- Статусная полоса ------------------------------------------------
     status_bar = ft.Container(
+        bgcolor=MTS_WHITE,
+        border=ft.Border(top=ft.BorderSide(1, "#E8E8EA")),
         content=ft.Text(
             "Подключите услугу — настройка займёт менее 5 минут",
             color=MTS_GRAY,
             size=13,
         ),
-        padding=ft.Padding.symmetric(horizontal=8, vertical=8),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=10),
     )
 
     # --- Функции услуги (видны после подключения) ------------------------
-    routing_group = ft.RadioGroup(
-        value=ROUTING_VOICE,
-        content=ft.Row(
-            [
-                ft.Radio(
-                    value=ROUTING_VOICE,
-                    label=ROUTING_VOICE_LABEL,
-                    active_color=MTS_RED,
-                ),
-                ft.Radio(
-                    value=ROUTING_CHAT,
-                    label=ROUTING_CHAT_LABEL,
-                    active_color=MTS_RED,
-                ),
-            ],
-            spacing=16,
-            tight=True,
-        ),
-    )
-
-    def _feature_row(title: str, desc: str) -> ft.Container:
-        """Строка функции услуги с переключателем вкл/выкл."""
-        return ft.Container(
+    def _setting_check(title: str, desc: str, *, value: bool = True) -> tuple:
+        """Строка настройки: квадратный чекбокс + подпись."""
+        box = _square_checkbox(value=value)
+        row = ft.Container(
             padding=ft.Padding.symmetric(horizontal=16, vertical=12),
             bgcolor=MTS_WHITE,
             border_radius=16,
-            border=ft.Border(
-                top=ft.BorderSide(width=1, color="#E8E8EA"),
-                right=ft.BorderSide(width=1, color="#E8E8EA"),
-                bottom=ft.BorderSide(width=1, color="#E8E8EA"),
-                left=ft.BorderSide(width=1, color="#E8E8EA"),
-            ),
+            border=ft.Border.all(1, "#E8E8EA"),
             content=ft.Row(
                 [
+                    box,
                     ft.Column(
                         [
                             ft.Text(
@@ -370,25 +342,68 @@ def main(page: ft.Page):
                         ],
                         spacing=2,
                         tight=True,
-                        expand=True,
                     ),
-                    ft.Switch(value=True, active_color=MTS_RED),
                 ],
                 spacing=12,
-                wrap=True,  # на узких экранах переключатель уходит ниже
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ft.CrossAxisAlignment.START,
             ),
         )
+        return box, row
 
-    # Та же кнопка Telegram-бота — после подключения (в панели функций)
-    tg_btn_panel = _make_tg_button()
-    tg_hint_panel = ft.Text(TELEGRAM_TOGGLE_HINT, size=12, color=MTS_GRAY, expand=True)
-    tg_buttons.append(tg_btn_panel)
-    tg_hints.append(tg_hint_panel)
+    setting_checks = []
+    setting_rows = []
+    for title, desc in FEATURES:
+        box, row = _setting_check(title, desc)
+        setting_checks.append(box)
+        setting_rows.append(row)
+
+    voice_check, voice_row = _setting_check(
+        ROUTING_VOICE_LABEL,
+        "ИИ отвечает голосом на входящий звонок",
+        value=True,
+    )
+    chat_check, chat_row = _setting_check(
+        ROUTING_CHAT_LABEL,
+        "Переводить разговор в чат вместо голоса",
+        value=False,
+    )
+
+    def _on_voice(e):
+        if voice_check.value:
+            chat_check.value = False
+        elif not chat_check.value:
+            voice_check.value = True
+        page.update()
+
+    def _on_chat(e):
+        if chat_check.value:
+            voice_check.value = False
+        elif not voice_check.value:
+            chat_check.value = True
+        page.update()
+
+    voice_check.on_change = _on_voice
+    chat_check.on_change = _on_chat
+
+    tg_open_btn = ft.FilledButton(
+        TELEGRAM_OPEN_TEXT,
+        icon=ft.Icons.TELEGRAM,
+        url=TELEGRAM_BOT_URL,
+        data=TELEGRAM_BOT_URL,
+        style=ft.ButtonStyle(
+            bgcolor=MTS_RED,
+            overlay_color=MTS_RED_DARK,
+            color=MTS_WHITE,
+            shape=ft.RoundedRectangleBorder(radius=12),
+            padding=ft.Padding.symmetric(horizontal=20, vertical=12),
+        ),
+        on_click=lambda e: open_telegram(),
+    )
 
     features_panel = ft.Container(
-        visible=False,          # до подключения скрыта
-        width=560,
+        visible=True,
+        bgcolor=MTS_BG,
+        padding=ft.Padding.symmetric(horizontal=24, vertical=16),
         content=ft.Column(
             [
                 ft.Text(
@@ -403,25 +418,38 @@ def main(page: ft.Page):
                     weight=ft.FontWeight.W_600,
                     color=MTS_DARK,
                 ),
-                routing_group,
-                *[_feature_row(t, d) for t, d in FEATURES],
+                voice_row,
+                chat_row,
+                *setting_rows,
                 ft.Divider(height=1, color="#E8E8EA"),
-                ft.Row(
-                    [
-                        tg_btn_panel,
-                        tg_hint_panel,
-                    ],
-                    spacing=12,
-                    wrap=True,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ft.Container(
+                    padding=ft.Padding.symmetric(horizontal=16, vertical=14),
+                    bgcolor=MTS_WHITE,
+                    border_radius=16,
+                    border=ft.Border.all(1, "#E8E8EA"),
+                    content=ft.Column(
+                        [
+                            ft.Text(
+                                "Telegram-бот",
+                                size=15,
+                                weight=ft.FontWeight.W_600,
+                                color=MTS_DARK,
+                            ),
+                            ft.Text(TELEGRAM_TOGGLE_HINT, size=13, color=MTS_GRAY),
+                            tg_open_btn,
+                        ],
+                        spacing=8,
+                        tight=True,
+                    ),
                 ),
                 ft.Text(
-                "Все изменения вступают в силу сразу — без повторной настройки",
+                    "Все изменения вступают в силу сразу — без повторной настройки",
                     size=12,
                     color=MTS_GRAY,
                 ),
             ],
             spacing=12,
+            tight=True,
         ),
     )
 
@@ -432,47 +460,43 @@ def main(page: ft.Page):
         weight=ft.FontWeight.BOLD,
         color=MTS_WHITE,
     )
+    header_subtitle = ft.Text(
+        f"| {HEADER_CONNECT_SUBTITLE}",
+        size=15,
+        color=MTS_WHITE,
+    )
     header = ft.Container(
         bgcolor=MTS_RED,
         padding=ft.Padding.symmetric(horizontal=32, vertical=16),
         content=ft.Row(
             [
                 header_title,
-                ft.Text("| Подключение услуги", size=15, color=MTS_WHITE),
+                header_subtitle,
             ],
             spacing=8,
-            wrap=True,  # на узких экранах подпись переносится, а не вылезает
+            wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
     )
 
-    # --- Каркас страницы --------------------------------------------------
-    # tight + scroll у корня: дети растянуты на всю ширину (шапка/статус
-    # во весь экран), центр по центру, страница прокручивается при
-    # переполнении. Связка Container(alignment) + Column(scroll) в центре
-    # даёт известный баг Flet — серое поле вместо контента, поэтому её
-    # здесь намеренно нет.
-    center_box = ft.Container(
-        expand=True,
-        alignment=ft.Alignment.CENTER,  # карточка/панель по центру экрана
-        content=ft.Column(
-            [service_card, features_panel],
-            tight=True,
-            alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
+    stage = ft.Column(
+        [
+            service_card,
+        ],
+        tight=True,
+        alignment=ft.MainAxisAlignment.CENTER,
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        spacing=16,
     )
 
     root = ft.Column(
         [
             header,
-            center_box,
+            stage,
             status_bar,
         ],
-        spacing=0,
         tight=True,
-        scroll=ft.ScrollMode.AUTO,
-        # Дети растянуты на всю ширину экрана (шапка/статус во весь экран)
+        spacing=0,
         horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
     )
     page.add(root)
@@ -484,22 +508,17 @@ def main(page: ft.Page):
         height = height or getattr(page, "height", None) or 720
         mobile = width <= MOBILE_BREAKPOINT
 
-        # Горизонтальные отступы: компактные на телефоне
         h_pad = 16 if mobile else 32
+        card_w = max(240, min(CARD_SIZE, int(width * 0.88)))
+        service_card.width = card_w
+        header_icon_box.height = 72 if mobile else 88
 
-        # Карточка вписывается и в ширину, и в высоту экрана
-        card = max(220, min(CARD_SIZE, int(width * 0.85), int(height * 0.5)))
-        service_card.width = card
-        service_card.height = card
-
-        # Шапка и статусная полоса
         header.padding = ft.Padding.symmetric(
             horizontal=h_pad, vertical=12 if mobile else 16
         )
-        status_bar.padding = ft.Padding.symmetric(horizontal=h_pad, vertical=8)
+        status_bar.padding = ft.Padding.symmetric(horizontal=h_pad, vertical=10)
         header_title.size = 18 if mobile else 22
 
-        # Крупные тач-таргеты на мобильных
         more_button.style.padding = ft.Padding.symmetric(
             horizontal=32 if mobile else 24,
             vertical=14 if mobile else 10,
@@ -508,33 +527,30 @@ def main(page: ft.Page):
             radius=14 if mobile else 12
         )
 
-        # Диалог «Подробнее» не шире экрана и с прокруткой
-        dialog_box.width = min(420, width - 48)
-        dialog_box.height = min(380, height - 240) if mobile else None
+        dialog_box.width = min(420, max(240, width - 48))
+        dialog_box.height = min(420, height - 200) if mobile else None
 
-        # Панель функций подстраивается под ширину экрана
-        features_panel.width = min(560, width - 2 * h_pad)
+        features_panel.padding = ft.Padding.symmetric(horizontal=h_pad, vertical=16)
 
         page.update()
 
-    # Ссылки на ключевые контролы — для smoke-теста и отладки
     page.ui = {
         "service_card": service_card,
         "features_panel": features_panel,
         "connect_btn": connect_btn,
         "consent": consent_checkbox,
-        "tg_state": tg,
-        "tg_btn_dialog": tg_btn_dialog,
-        "tg_btn_panel": tg_btn_panel,
-        "tg_hint_dialog": tg_hint_dialog,
-        "tg_hint_panel": tg_hint_panel,
+        "consent_error": consent_error,
+        "tg_open_btn": tg_open_btn,
+        "setting_checks": setting_checks,
+        "header_subtitle": header_subtitle,
+        "stage": stage,
         "status_bar": status_bar,
         "dialog": details_dialog,
+        "dialog_box": dialog_box,
     }
 
     page.on_resize = lambda e: apply_responsive(e.width, e.height)
 
-    # Регистрируем диалог один раз и прячем его до нажатия «Подробнее»
     page.show_dialog(details_dialog)
     details_dialog.open = False
     apply_responsive()

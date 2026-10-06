@@ -6,7 +6,15 @@
 
 from types import SimpleNamespace
 
+import flet as ft
+
 from frontend.app import main as build_page
+from frontend.assests import (
+    HEADER_CONNECT_SUBTITLE,
+    SERVICE_NAME,
+    TELEGRAM_BOT_URL,
+    TELEGRAM_OPEN_TEXT,
+)
 
 
 class _Window:
@@ -22,8 +30,10 @@ class _MockPage:
         self.title = ""
         self.bgcolor = None
         self.padding = 0
+        self.theme = None
         self.added = []
         self.shown = []
+        self.launched = []
         self.ui = None
         self.on_resize = None
 
@@ -33,6 +43,9 @@ class _MockPage:
     def show_dialog(self, dialog):
         self.shown.append(dialog)
         dialog.open = True
+
+    def launch_url(self, url):
+        self.launched.append(url)
 
     def update(self, *args, **kwargs):
         pass
@@ -58,6 +71,7 @@ def test_responsive_resize():
     page.on_resize(SimpleNamespace(width=360, height=640))    # телефон
     page.on_resize(SimpleNamespace(width=768, height=1024))   # планшет
     page.on_resize(SimpleNamespace(width=1440, height=900))   # десктоп
+    assert page.ui["service_card"].height is None, "карточка не должна быть квадратом фиксированной высоты"
 
 
 def test_consent_gates_connect_button():
@@ -69,40 +83,78 @@ def test_consent_gates_connect_button():
     assert not ui["connect_btn"].disabled, "кнопка остаётся кликабельной"
     assert ui["connect_btn"].opacity < 1.0, "без согласия кнопка «тухнет»"
 
-    # Клик без согласия не подключает услугу и просит подтвердить оферту
     ui["connect_btn"].on_click(None)
     assert ui["service_card"].visible, "без согласия подключать нельзя"
-    assert not ui["features_panel"].visible
+    assert ui["stage"].controls[0] is ui["service_card"]
     assert ui["consent"].error, "должна появиться подсказка про согласие"
+    assert ui["consent_error"].visible
 
-    # Принимаем оферту — кнопка «расцветает», ошибка исчезает
     ui["consent"].value = True
     ui["consent"].on_change(SimpleNamespace(control=ui["consent"]))
     assert ui["connect_btn"].opacity == 1.0, "после согласия кнопка активна"
-    assert ui["consent"].error is None, "подсказка исчезает"
+    assert not ui["consent"].error
+    assert not ui["consent_error"].visible
 
 
-def test_telegram_toggle_and_features_panel():
-    """Переключатель Telegram переносится, панель функций заменяет карточку."""
+def test_feature_bullets_are_simple_checks():
+    """Плюшки услуги — обычные галочки, не кружки и не пустые квадраты."""
+    page = _page()
+    dialog_column = page.ui["dialog_box"].content
+    icons = [
+        row.controls[0]
+        for row in dialog_column.controls
+        if isinstance(row, ft.Row) and row.controls and isinstance(row.controls[0], ft.Icon)
+    ]
+    assert icons, "в диалоге должны быть пункты услуги"
+    for icon in icons:
+        assert icon.icon == ft.Icons.CHECK, "плюшки — простые галочки"
+        assert icon.icon != ft.Icons.CHECK_CIRCLE
+        assert icon.icon != ft.Icons.CHECK_BOX_OUTLINE_BLANK
+    texts = " ".join(
+        c.value
+        for c in dialog_column.controls
+        if isinstance(c, ft.Text)
+    )
+    assert "Telegram" not in texts, "Telegram не предлагается до подключения"
+
+
+def test_telegram_option_only_after_connect():
+    """После подключения — название услуги, чеки настроек и переход в бота."""
     page = _page()
     ui = page.ui
 
-    assert ui["features_panel"].visible is False
-
-    # Выключаем Telegram-бота перед подключением
-    ui["tg_switch"].value = False
+    dialog_column = ui["dialog_box"].content
+    assert ui["tg_open_btn"] not in _flatten(dialog_column), "бота нет в окне подключения"
+    assert HEADER_CONNECT_SUBTITLE in ui["header_subtitle"].value
+    assert ui["stage"].controls[0] is ui["service_card"]
 
     ui["consent"].value = True
     ui["consent"].on_change(SimpleNamespace(control=ui["consent"]))
     ui["connect_btn"].on_click(None)
 
-    assert not ui["service_card"].visible, "карточка скрывается после подключения"
-    assert ui["features_panel"].visible, "панель функций появляется"
-    assert ui["tg_main_switch"].value is False, "состояние Telegram перенеслось"
+    assert SERVICE_NAME in ui["header_subtitle"].value
+    assert HEADER_CONNECT_SUBTITLE not in ui["header_subtitle"].value
+    assert ui["stage"].controls[0] is ui["features_panel"]
+    assert ui["features_panel"].visible
+    assert ui["setting_checks"], "должны быть чекбоксы настроек"
+    assert all(isinstance(c, ft.Checkbox) for c in ui["setting_checks"])
+    assert ui["tg_open_btn"] in _flatten(ui["features_panel"])
+    assert ui["tg_open_btn"].content == TELEGRAM_OPEN_TEXT
+    assert ui["tg_open_btn"].url == TELEGRAM_BOT_URL
 
-    # TODO3: у панели есть заголовок и функции услуги
-    panel_controls = ui["features_panel"].content.controls
-    assert len(panel_controls) >= 5, "панель должна содержать функции услуги"
+    ui["tg_open_btn"].on_click(None)
+    assert page.launched == [TELEGRAM_BOT_URL]
+
+
+def _flatten(control):
+    found = [control]
+    kids = getattr(control, "controls", None) or []
+    inner = getattr(control, "content", None)
+    if inner is not None and not isinstance(inner, str):
+        kids = list(kids) + [inner]
+    for child in kids:
+        found.extend(_flatten(child))
+    return found
 
 
 def run_all():
