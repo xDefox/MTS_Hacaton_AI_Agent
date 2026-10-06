@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import requests
 
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # Токен от @BotFather
+TOKEN = "8628878694:AAFfJMsE7pqXNQ0dmLj9VoqUPyfRX1fS-kQ"  # Токен от @BotFather
 API_URL = "http://127.0.0.1:8000/api/v1/process_incoming_call"  # Твой FastAPI
 
 bot = Bot(token=TOKEN)

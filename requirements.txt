@@ -1,6 +1,16 @@
+<<<<<<< Updated upstream
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.9.0
 pydantic-settings>=2.6.0
 python-dotenv>=1.0.0
 yandex-ai-studio-sdk>=0.22.0
+=======
+fastapi==0.141.1
+flet>=0.25.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+starlette==1.6.0
+uvicorn==0.52.4
+aiogram==3.31.0
+>>>>>>> Stashed changes

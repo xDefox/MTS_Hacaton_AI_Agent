@@ -1,11 +1,13 @@
 """Страница подключения услуги «ИИ-агент для звонков».
 
 Flet 0.86 · стиль МТС · адаптив под десктоп, планшеты и мобильные экраны.
+
+Запуск:  python -m frontend.app
 """
 
 import flet as ft
 
-from assests import (
+from .assests import (
     MTS_RED,
     MTS_RED_DARK,
     MTS_DARK,
@@ -19,6 +21,18 @@ from assests import (
     SERVICE_FEATURES,
     CONNECT_BUTTON_TEXT,
     MORE_BUTTON_TEXT,
+    CONSENT_TEXT,
+    CONSENT_DOCS,
+    TELEGRAM_TOGGLE_TEXT,
+    TELEGRAM_TOGGLE_HINT,
+    FEATURES_TITLE,
+    FEATURES,
+    ROUTING_TITLE,
+    ROUTING_VOICE,
+    ROUTING_CHAT,
+    ROUTING_VOICE_LABEL,
+    ROUTING_CHAT_LABEL,
+    CONNECTED_STATUS,
 )
 
 CARD_SIZE = 280            # карточка на десктопе
@@ -51,19 +65,103 @@ def main(page: ft.Page):
         page.update()
 
     def connect_service(_=None):
+        # Без согласия на обработку данных услуга не подключается
+        if not consent_checkbox.value:
+            consent_checkbox.error = "Подтвердите согласие, чтобы подключить услугу"
+            page.update()
+            return
+        consent_checkbox.error = None
         close_dialog()
+        # Показываем панель функций вместо карточки подключения
+        service_card.visible = False
+        features_panel.visible = True
+        tg_note = (
+            " · Telegram-бот подключён"
+            if tg["connected"]
+            else " · Telegram-бот: не подключён"
+        )
         status_bar.content = ft.Row(
             [
                 ft.Icon(ft.Icons.CHECK_CIRCLE, color=MTS_RED, size=18),
                 ft.Text(
-                    f"Услуга «{SERVICE_NAME}» подключена",
+                    f"{CONNECTED_STATUS}: «{SERVICE_NAME}»{tg_note}",
                     color=MTS_DARK,
                     weight=ft.FontWeight.W_600,
+                    expand=True,   # текст занимает строку и переносится
                 ),
             ],
             spacing=8,
+            wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         page.update()
+
+    # --- Согласие, Telegram-бот и кнопка подключения ---------------------
+    def on_consent_change(e):
+        """Кнопка «Подключить» тухнет, пока не принята оферта."""
+        agreed = bool(e.control.value)
+        connect_btn.opacity = 1.0 if agreed else 0.4
+        if agreed:
+            consent_checkbox.error = None
+        page.update()
+
+    consent_checkbox = ft.Checkbox(
+        label=CONSENT_TEXT,
+        value=False,
+        active_color=MTS_RED,
+        on_change=on_consent_change,
+    )
+
+    # Простая кнопка подключения Telegram-бота (тумблер по клику)
+    tg = {"connected": False}
+    tg_buttons = []
+    tg_hints = []
+
+    def toggle_tg(_=None):
+        """Подключает/отключает Telegram-бота — меняет вид обеих кнопок."""
+        tg["connected"] = not tg["connected"]
+        for btn in tg_buttons:
+            btn.style.bgcolor = MTS_DARK if tg["connected"] else MTS_RED
+            btn.icon = ft.Icon(
+                ft.Icons.CHECK_CIRCLE if tg["connected"] else ft.Icons.ADD,
+                color=MTS_WHITE,
+            )
+        for hint in tg_hints:
+            hint.value = (
+                "Бот подключён — уведомления и саммари будут приходить"
+                if tg["connected"]
+                else TELEGRAM_TOGGLE_HINT
+            )
+        page.update()
+
+    def _make_tg_button() -> ft.FilledButton:
+        return ft.FilledButton(
+            TELEGRAM_TOGGLE_TEXT,
+            icon=ft.Icon(ft.Icons.ADD, color=MTS_WHITE),
+            style=ft.ButtonStyle(
+                bgcolor=MTS_RED,
+                overlay_color=MTS_RED_DARK,
+                color=MTS_WHITE,
+            ),
+            on_click=lambda e: toggle_tg(),
+        )
+
+    tg_btn_dialog = _make_tg_button()
+    tg_hint_dialog = ft.Text(TELEGRAM_TOGGLE_HINT, size=12, color=MTS_GRAY)
+    tg_buttons.append(tg_btn_dialog)
+    tg_hints.append(tg_hint_dialog)
+
+    connect_btn = ft.FilledButton(
+        CONNECT_BUTTON_TEXT,
+        opacity=0.4,  # «тухнет», пока не принята оферта
+        animate_opacity=ft.Animation(250, ft.AnimationCurve.EASE_OUT),
+        style=ft.ButtonStyle(
+            bgcolor=MTS_RED,
+            overlay_color=MTS_RED_DARK,
+            color=MTS_WHITE,
+        ),
+        on_click=lambda e: connect_service(e),
+    )
 
     # --- Окно «Подробнее» -----------------------------------------------
     dialog_box = ft.Container(
@@ -92,6 +190,16 @@ def main(page: ft.Page):
                     )
                     for f in SERVICE_FEATURES
                 ],
+                ft.Divider(height=1, color="#E8E8EA"),
+                consent_checkbox,
+                ft.Text(
+                    CONSENT_DOCS,
+                    size=12,
+                    color=MTS_GRAY,
+                ),
+                ft.Divider(height=1, color="#E8E8EA"),
+                tg_btn_dialog,
+                tg_hint_dialog,
             ],
             spacing=12,
             tight=True,
@@ -115,15 +223,7 @@ def main(page: ft.Page):
                 style=ft.ButtonStyle(color=MTS_GRAY),
                 on_click=lambda e: close_dialog(),
             ),
-            ft.FilledButton(
-                CONNECT_BUTTON_TEXT,
-                style=ft.ButtonStyle(
-                    bgcolor=MTS_RED,
-                    overlay_color=MTS_RED_DARK,
-                    color=MTS_WHITE,
-                ),
-                on_click=lambda e: connect_service(e),
-            ),
+            connect_btn,
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
@@ -223,6 +323,108 @@ def main(page: ft.Page):
         padding=ft.Padding.symmetric(horizontal=8, vertical=8),
     )
 
+    # --- Функции услуги (видны после подключения) ------------------------
+    routing_group = ft.RadioGroup(
+        value=ROUTING_VOICE,
+        content=ft.Row(
+            [
+                ft.Radio(
+                    value=ROUTING_VOICE,
+                    label=ROUTING_VOICE_LABEL,
+                    active_color=MTS_RED,
+                ),
+                ft.Radio(
+                    value=ROUTING_CHAT,
+                    label=ROUTING_CHAT_LABEL,
+                    active_color=MTS_RED,
+                ),
+            ],
+            spacing=16,
+            tight=True,
+        ),
+    )
+
+    def _feature_row(title: str, desc: str) -> ft.Container:
+        """Строка функции услуги с переключателем вкл/выкл."""
+        return ft.Container(
+            padding=ft.Padding.symmetric(horizontal=16, vertical=12),
+            bgcolor=MTS_WHITE,
+            border_radius=16,
+            border=ft.Border(
+                top=ft.BorderSide(width=1, color="#E8E8EA"),
+                right=ft.BorderSide(width=1, color="#E8E8EA"),
+                bottom=ft.BorderSide(width=1, color="#E8E8EA"),
+                left=ft.BorderSide(width=1, color="#E8E8EA"),
+            ),
+            content=ft.Row(
+                [
+                    ft.Column(
+                        [
+                            ft.Text(
+                                title,
+                                size=15,
+                                weight=ft.FontWeight.W_600,
+                                color=MTS_DARK,
+                            ),
+                            ft.Text(desc, size=13, color=MTS_GRAY),
+                        ],
+                        spacing=2,
+                        tight=True,
+                        expand=True,
+                    ),
+                    ft.Switch(value=True, active_color=MTS_RED),
+                ],
+                spacing=12,
+                wrap=True,  # на узких экранах переключатель уходит ниже
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        )
+
+    # Та же кнопка Telegram-бота — после подключения (в панели функций)
+    tg_btn_panel = _make_tg_button()
+    tg_hint_panel = ft.Text(TELEGRAM_TOGGLE_HINT, size=12, color=MTS_GRAY, expand=True)
+    tg_buttons.append(tg_btn_panel)
+    tg_hints.append(tg_hint_panel)
+
+    features_panel = ft.Container(
+        visible=False,          # до подключения скрыта
+        width=560,
+        content=ft.Column(
+            [
+                ft.Text(
+                    FEATURES_TITLE,
+                    size=20,
+                    weight=ft.FontWeight.BOLD,
+                    color=MTS_DARK,
+                ),
+                ft.Text(
+                    ROUTING_TITLE,
+                    size=14,
+                    weight=ft.FontWeight.W_600,
+                    color=MTS_DARK,
+                ),
+                routing_group,
+                *[_feature_row(t, d) for t, d in FEATURES],
+                ft.Divider(height=1, color="#E8E8EA"),
+                ft.Row(
+                    [
+                        tg_btn_panel,
+                        tg_hint_panel,
+                    ],
+                    spacing=12,
+                    wrap=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Text(
+                "Все изменения вступают в силу сразу — без повторной настройки",
+                    size=12,
+                    color=MTS_GRAY,
+                ),
+            ],
+            spacing=12,
+        ),
+    )
+
     # --- Шапка страницы --------------------------------------------------
     header_title = ft.Text(
         "МТС",
@@ -239,14 +441,26 @@ def main(page: ft.Page):
                 ft.Text("| Подключение услуги", size=15, color=MTS_WHITE),
             ],
             spacing=8,
+            wrap=True,  # на узких экранах подпись переносится, а не вылезает
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
     )
 
-    # --- Каркас страницы (со скроллом на маленьких экранах) ---------------
+    # --- Каркас страницы --------------------------------------------------
+    # tight + scroll у корня: дети растянуты на всю ширину (шапка/статус
+    # во весь экран), центр по центру, страница прокручивается при
+    # переполнении. Связка Container(alignment) + Column(scroll) в центре
+    # даёт известный баг Flet — серое поле вместо контента, поэтому её
+    # здесь намеренно нет.
     center_box = ft.Container(
         expand=True,
-        alignment=ft.Alignment.CENTER,
-        content=service_card,
+        alignment=ft.Alignment.CENTER,  # карточка/панель по центру экрана
+        content=ft.Column(
+            [service_card, features_panel],
+            tight=True,
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
     )
 
     root = ft.Column(
@@ -258,6 +472,8 @@ def main(page: ft.Page):
         spacing=0,
         tight=True,
         scroll=ft.ScrollMode.AUTO,
+        # Дети растянуты на всю ширину экрана (шапка/статус во весь экран)
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
     )
     page.add(root)
 
@@ -296,7 +512,25 @@ def main(page: ft.Page):
         dialog_box.width = min(420, width - 48)
         dialog_box.height = min(380, height - 240) if mobile else None
 
+        # Панель функций подстраивается под ширину экрана
+        features_panel.width = min(560, width - 2 * h_pad)
+
         page.update()
+
+    # Ссылки на ключевые контролы — для smoke-теста и отладки
+    page.ui = {
+        "service_card": service_card,
+        "features_panel": features_panel,
+        "connect_btn": connect_btn,
+        "consent": consent_checkbox,
+        "tg_state": tg,
+        "tg_btn_dialog": tg_btn_dialog,
+        "tg_btn_panel": tg_btn_panel,
+        "tg_hint_dialog": tg_hint_dialog,
+        "tg_hint_panel": tg_hint_panel,
+        "status_bar": status_bar,
+        "dialog": details_dialog,
+    }
 
     page.on_resize = lambda e: apply_responsive(e.width, e.height)
 

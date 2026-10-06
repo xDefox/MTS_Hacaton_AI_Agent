@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     company_name: str = "IT-компания Ивана Петрова"
     owner_name: str = "Иван Петров"
 
+    tg_bot_token: str = "8628878694:AAFfJMsE7pqXNQ0dmLj9VoqUPyfRX1fS-kQ"
+
 
 @lru_cache
 def get_settings() -> Settings:
