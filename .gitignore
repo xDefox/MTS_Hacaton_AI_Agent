@@ -24,6 +24,10 @@ Thumbs.db
 
 # Runtime / local data
 data/
+.ollama/
+.cache/
+ollama-windows-amd64/
+ollama-windows-amd64.zip
 *.db
 *.sqlite3
 .coverage

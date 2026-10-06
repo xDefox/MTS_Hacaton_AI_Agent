@@ -132,6 +132,16 @@ def _parse_output(raw_text: str) -> AgentLLMOutput:
     if cleaned.startswith("```"):
         cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     data = json.loads(cleaned)
+    if isinstance(data, dict):
+        # Маленькие модели иногда пропускают поля — добиваем безопасными дефолтами
+        data.setdefault("caller_name", "")
+        data.setdefault("recommended_next_step", "Просмотреть резюме")
+        data.setdefault("summary", data.get("agent_response", "")[:240] or "Без резюме")
+        data.setdefault("agent_response", "Здравствуйте! Чем могу помочь?")
+        data.setdefault("is_critical", False)
+        data.setdefault("priority", "normal")
+        data.setdefault("intent", "other")
+        data.setdefault("action_required", "continue_dialog")
     return AgentLLMOutput.model_validate(data)
 
 
