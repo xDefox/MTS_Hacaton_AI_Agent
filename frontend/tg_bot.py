@@ -1,4 +1,4 @@
-"""Telegram-бот Ивана: /start = услуга подключена; отчёты шлёт бэкенд."""
+"""Telegram-бот Ивана: /start — услуга активна на номере; /history и /settings — команды."""
 
 import asyncio
 import html
@@ -7,12 +7,19 @@ import os
 import time
 from pathlib import Path
 
-from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+import httpx
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command, CommandObject
+from aiogram.types import BotCommand
 from dotenv import load_dotenv
 
-from backend.services.telegram_notify import add_subscriber
+from backend.services.telegram_notify import (
+    activate_line,
+    format_phone,
+    last_pending_phone,
+    normalize_phone,
+    phone_for_chat,
+)
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -20,118 +27,108 @@ TOKEN = (os.getenv("TG_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN") or "").str
 if not TOKEN:
     raise SystemExit("Нет TG_BOT_TOKEN: положите токен в .env в корне репозитория")
 
-SERVICE_NAME = "AI менеджер звонков"
+API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 user_settings = {
-    "status": "🟢 Активен (Ловит спам)",
-    "mode": "Строгий (Только важные)",
+    "mode": "Строгий (только важные)",
 }
 _last_start: dict[int, float] = {}
 
 
-def _home_keyboard() -> types.InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🟢 Услуга активна", callback_data="status_toggle")
-    builder.button(text="⚙️ Настройки сценариев", callback_data="settings_menu")
-    builder.adjust(1)
-    return builder.as_markup()
+def _line_phone(chat_id: int, start_args: str = "") -> str:
+    return (
+        normalize_phone(start_args)
+        or phone_for_chat(chat_id)
+        or last_pending_phone()
+    )
 
 
-def _register_chat(chat_id: int) -> None:
-    """Чтобы бэкенд знал, куда слать отчёты process_call / process_call_voice."""
-    add_subscriber(chat_id)
+async def _activate_via_api(phone: str, chat_id: int) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.post(
+                f"{API_BASE}/api/v1/telegram/subscribe",
+                json={"phone": phone, "chat_id": chat_id},
+            )
+        if resp.status_code == 200:
+            return
+    except httpx.RequestError:
+        logging.warning("API недоступен, пишем линию локально")
+    activate_line(phone, chat_id)
 
 
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, command: CommandObject):
     chat_id = message.chat.id
     now = time.monotonic()
     if now - _last_start.get(chat_id, 0) < 3:
         return
     _last_start[chat_id] = now
 
-    _register_chat(chat_id)
+    phone = _line_phone(chat_id, command.args or "")
+    if phone:
+        await _activate_via_api(phone, chat_id)
+    display = format_phone(phone) if phone else "—"
+    await message.answer(f"Услуга активна на номере {display}")
+
+
+@dp.message(Command("history"))
+async def cmd_history(message: types.Message):
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{API_BASE}/api/v1/calls", params={"limit": 8})
+        if resp.status_code != 200:
+            await message.answer("История недоступна: бэкенд не ответил.")
+            return
+        items = resp.json().get("items") or []
+        if not items:
+            await message.answer("История пуста — звонков ещё не было.")
+            return
+        lines = ["История звонков"]
+        for item in items:
+            flag = "⚠️" if item.get("is_critical") else "•"
+            phone = html.escape(str(item.get("caller_phone") or "—"))
+            summary = html.escape(str(item.get("summary") or "—"))
+            lines.append(f"\n{flag} {phone}\n{summary}")
+        await message.answer("\n".join(lines))
+    except httpx.RequestError:
+        await message.answer("Не удалось связаться с API. Запустите uvicorn на :8000.")
+
+
+@dp.message(Command("settings"))
+async def cmd_settings(message: types.Message):
+    phone = format_phone(phone_for_chat(message.chat.id) or last_pending_phone())
     await message.answer(
-        f"✅ <b>Услуга подключена</b>\n\n"
-        f"«{html.escape(SERVICE_NAME)}» принимает входящие. "
-        f"Отчёт нейросети придёт сюда, когда на бэкенд поступит звонок "
-        f"(<code>/process_call</code> или <code>/process_call_voice</code>).",
-        reply_markup=_home_keyboard(),
-        parse_mode="HTML",
+        "Настройки\n"
+        f"Номер: {phone}\n"
+        f"Режим: {user_settings['mode']}\n\n"
+        "Сменить режим: /mode"
     )
 
 
-@dp.callback_query(F.data == "status_toggle")
-async def toggle_status(callback: types.CallbackQuery):
-    current = user_settings["status"]
-    if "Активен" in current:
-        user_settings["status"] = "⏸️ Приостановлен"
-        new_text = (
-            "🔴 <b>Услуга временно отключена.</b> "
-            "ИИ-агент больше не перехватывает звонки."
-        )
+@dp.message(Command("mode"))
+async def cmd_mode(message: types.Message):
+    if "Строгий" in user_settings["mode"]:
+        user_settings["mode"] = "Лояльный (пропускать клиентов)"
     else:
-        user_settings["status"] = "🟢 Активен (Ловит спам)"
-        new_text = (
-            "🟢 <b>Услуга успешно активирована!</b> ИИ-агент снова на страже."
-        )
-
-    builder = InlineKeyboardBuilder()
-    builder.button(text="⚙️ Настройки сценариев", callback_data="settings_menu")
-    builder.button(text="🔙 В главное меню", callback_data="back_home")
-    builder.adjust(1)
-    await callback.message.edit_text(
-        new_text, reply_markup=builder.as_markup(), parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "settings_menu")
-async def settings_menu(callback: types.CallbackQuery):
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Сменить режим (Строгий / Мягкий)", callback_data="change_mode")
-    builder.button(text="🔙 В главное меню", callback_data="back_home")
-    builder.adjust(1)
-    await callback.message.edit_text(
-        "⚙️ <b>Панель управления ИИ-агентом</b>\n\n"
-        f"• Статус: <code>{html.escape(user_settings['status'])}</code>\n"
-        f"• Режим фильтрации: <code>{html.escape(user_settings['mode'])}</code>\n\n"
-        "Выберите параметр для изменения:",
-        reply_markup=builder.as_markup(),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "change_mode")
-async def change_mode(callback: types.CallbackQuery):
-    if user_settings["mode"] == "Строгий (Только важные)":
-        user_settings["mode"] = "🤝 Лояльный (Пропускать клиентов)"
-    else:
-        user_settings["mode"] = "Строгий (Только важные)"
-    await callback.answer(f"Режим изменен на: {user_settings['mode']}", show_alert=True)
-    await settings_menu(callback)
-
-
-@dp.callback_query(F.data == "back_home")
-async def back_home(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        f"✅ <b>Услуга подключена</b>\n\n"
-        f"«{html.escape(SERVICE_NAME)}» работает. Жду звонки с бэкенда.",
-        reply_markup=_home_keyboard(),
-        parse_mode="HTML",
-    )
-    await callback.answer()
+        user_settings["mode"] = "Строгий (только важные)"
+    await message.answer(f"Режим: {user_settings['mode']}")
 
 
 async def main():
-    logging.info(
-        "Бот слушает /start. Отчёты приходят только с бэкенда "
-        "(process_call / process_call_voice)."
+    await bot.delete_webhook(drop_pending_updates=False)
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Услуга активна на номере"),
+            BotCommand(command="history", description="История звонков"),
+            BotCommand(command="settings", description="Настройки"),
+        ]
     )
+    me = await bot.get_me()
+    logging.info("Бот @%s: /start, /history, /settings", me.username)
     await dp.start_polling(bot)
 
 

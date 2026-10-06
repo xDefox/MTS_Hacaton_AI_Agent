@@ -37,6 +37,12 @@ SERVICE_FEATURES = [
 
 CONNECT_BUTTON_TEXT = "Подключить"
 MORE_BUTTON_TEXT = "Подробнее"
+LOGIN_TITLE = "Вход в приложение МТС"
+LOGIN_HINT = (
+    "В проде номер уже есть в профиле — лишней авторизации нет. "
+    "Сейчас это заглушка входа."
+)
+LOGIN_BUTTON_TEXT = "Продолжить"
 
 # Согласие на обработку данных — обязательный пункт подключения (ТЗ: безопасность)
 CONSENT_TEXT = (
@@ -80,3 +86,11 @@ ROUTING_VOICE_LABEL = "Отвечать голосом"
 ROUTING_CHAT_LABEL = "В чат"
 
 CONNECTED_STATUS = "Услуга подключена"
+DISCONNECT_BUTTON_TEXT = "Отключить услугу"
+CATALOG_TITLE = "Каталог услуг"
+
+# Соседняя карточка в каталоге — заглушка, чтобы экран выглядел как выбор услуг
+EXTRA_SERVICE_NAME = "МТС Защитник"
+EXTRA_SERVICE_TAGLINE = "Антиспам и защита номера"
+EXTRA_SERVICE_ICON = "🛡"
+EXTRA_BUTTON_TEXT = "Скоро"
