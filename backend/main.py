@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,13 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="MTS AI Agent API",
     description=(
@@ -19,6 +27,7 @@ app = FastAPI(
         "YandexGPT + резюме; SQLite-история для контроля (ТЗ)."
     ),
     version="1.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -30,11 +39,6 @@ app.add_middleware(
 )
 
 app.include_router(call_router)
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
 
 
 @app.get("/health")
