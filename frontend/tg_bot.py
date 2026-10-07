@@ -241,17 +241,17 @@ async def _begin_demo_call(message: types.Message) -> None:
         parse_mode="HTML",
         reply_markup=call_keyboard(),
     )
-    await message.answer(f"🗣 Агент: {greeting}")
+    # Сначала голос (caption = текст приветствия), текст — только если TTS недоступен
     ok = await synthesize_and_send_voice(
         message,
         api_base=API_BASE,
         text=greeting,
-        caption="Приветствие агента",
+        caption=f"🗣 {greeting[:200]}",
     )
     if not ok:
         await message.answer(
-            "Не удалось озвучить приветствие (проверьте uvicorn / TTS). "
-            "Текст выше — можно продолжать голосом."
+            f"🗣 Агент: {greeting}\n\n"
+            "Не удалось озвучить (uvicorn / TTS). Можно продолжать голосом или текстом."
         )
 
 
@@ -365,13 +365,20 @@ async def on_voice_during_call(message: types.Message):
 
     if payload is None:
         await message.answer(
-            "Не удалось обработать голос. Проверьте uvicorn и Ollama.",
+            "Не удалось обработать голос. Проверьте uvicorn и .env (YC_* или локальный Whisper).",
             reply_markup=call_keyboard(),
         )
         return
     if payload.get("error"):
+        err = str(payload["error"])
+        hint = ""
+        if "YC_FOLDER_ID" in err or "YC_API_KEY" in err:
+            hint = (
+                "\n\nВ .env нет Yandex-ключей. Добавьте YC_FOLDER_ID и YC_API_KEY "
+                "или перезапустите uvicorn после правки (STT уйдёт в Whisper)."
+            )
         await message.answer(
-            f"Ошибка API ({payload.get('status_code')}): {payload['error'][:400]}",
+            f"Ошибка API ({payload.get('status_code')}): {err[:400]}{hint}",
             reply_markup=call_keyboard(),
         )
         return
