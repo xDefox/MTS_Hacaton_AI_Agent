@@ -10,10 +10,13 @@ import flet as ft
 
 from frontend.app import main as build_page
 from frontend.assests import (
+    AVAILABLE_TITLE,
     CATALOG_TITLE,
+    CONNECTED_SECTION_TITLE,
     EXTRA_SERVICE_NAME,
     HEADER_CONNECT_SUBTITLE,
     LOGIN_TITLE,
+    OPEN_BUTTON_TEXT,
     SERVICE_NAME,
     TELEGRAM_OPEN_TEXT,
 )
@@ -88,6 +91,8 @@ def test_page_built_and_dialog_hidden():
 def test_responsive_resize():
     page = _page()
     page.on_resize(SimpleNamespace(width=360, height=640))    # телефон
+    assert page.ui["service_card"].width == 328, "на узком экране равные поля слева и справа"
+    assert page.ui["extra_card"].width == 328
     page.on_resize(SimpleNamespace(width=768, height=1024))   # планшет
     page.on_resize(SimpleNamespace(width=1440, height=900))   # десктоп
     assert page.ui["service_card"].height is None, "карточка не должна быть квадратом фиксированной высоты"
@@ -111,7 +116,11 @@ def test_login_gate_asks_phone_first():
     assert ui["catalog"].visible
     assert not ui["login_gate"].visible
     assert not ui["features_panel"].visible
+    assert ui["profile"].visible
+    assert "900" in (ui["profile_phone"].value or "")
     assert ui["service_card"].visible
+    assert not ui["connected_card"].visible
+    assert ui["connected_empty"].visible
     assert ui["service_card"] in _flatten(ui["catalog"])
     assert ui["extra_card"] in _flatten(ui["catalog"])
     catalog_text = " ".join(
@@ -120,6 +129,8 @@ def test_login_gate_asks_phone_first():
         if isinstance(c, ft.Text)
     )
     assert CATALOG_TITLE in catalog_text
+    assert AVAILABLE_TITLE in catalog_text
+    assert CONNECTED_SECTION_TITLE in catalog_text
     assert EXTRA_SERVICE_NAME in catalog_text
     assert SERVICE_NAME in catalog_text
 
@@ -205,19 +216,31 @@ def test_telegram_option_only_after_connect():
     assert "start=79001112233" in page.launched[-1]
     assert page.launched.count(page.launched[-1]) == 1
 
-    ui["disconnect_btn"].on_click(None)
+    ui["back_btn"].on_click(None)
     assert ui["catalog"].visible
     assert not ui["features_panel"].visible
     assert not ui["back_btn"].visible
     assert HEADER_CONNECT_SUBTITLE in ui["header_subtitle"].value
+    assert ui["connected_card"].visible, "после выхода услуга в «Подключённые»"
+    assert not ui["service_card"].visible, "в «Доступных» её уже нет"
+    assert not ui["connected_empty"].visible
+    assert ui["open_btn"].content == OPEN_BUTTON_TEXT
+
+    ui["open_btn"].on_click(None)
+    assert ui["features_panel"].visible, "повторно «Подключить» не нужно"
+    assert ui["back_btn"].visible
+
+    ui["disconnect_btn"].on_click(None)
+    assert ui["catalog"].visible
     assert ui["service_card"].visible
+    assert not ui["connected_card"].visible
     assert ui["extra_card"].visible
     assert ui["tg_active"].value is False
 
     shown_before = len(page.shown)
     ui["dialog"].open = False
     ui["more_btn"].on_click(None)
-    assert ui["dialog"].open, "после выхода «Подробнее» снова открывает услугу"
+    assert ui["dialog"].open, "после отключения снова «Подробнее»"
     assert len(page.shown) > shown_before
 
     ui["consent"].value = True
@@ -225,10 +248,6 @@ def test_telegram_option_only_after_connect():
     assert ui["features_panel"].visible, "после отключения услугу можно подключить снова"
     assert ui["back_btn"].visible
     assert ui["tg_active"].value is False, "старый /start не включает ползунок сам"
-
-    ui["back_btn"].on_click(None)
-    assert ui["catalog"].visible
-    assert ui["service_card"].visible
 
 
 def _flatten(control):

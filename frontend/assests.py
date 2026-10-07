@@ -17,7 +17,7 @@ MTS_WHITE = "#FFFFFF"      # белый
 
 # Данные услуги (для карточки подключения)
 SERVICE_NAME = "AI менеджер звонков"
-HEADER_CONNECT_SUBTITLE = "Подключение услуги"
+HEADER_CONNECT_SUBTITLE = "Услуги"
 SERVICE_TAGLINE = "Не пропускайте важные обращения"
 SERVICE_ICON = "📞"  # эмблема карточки (финальная иконка/логотип — в assets/)
 
@@ -87,7 +87,12 @@ ROUTING_CHAT_LABEL = "В чат"
 
 CONNECTED_STATUS = "Услуга подключена"
 DISCONNECT_BUTTON_TEXT = "Отключить услугу"
-CATALOG_TITLE = "Каталог услуг"
+OPEN_BUTTON_TEXT = "Открыть"
+CATALOG_TITLE = "Услуги"
+AVAILABLE_TITLE = "Доступные"
+CONNECTED_SECTION_TITLE = "Подключённые"
+EMPTY_CONNECTED = "Пока ничего не подключено — выберите услугу ниже"
+PROFILE_LABEL = "Профиль"
 
 # Соседняя карточка в каталоге — заглушка, чтобы экран выглядел как выбор услуг
 EXTRA_SERVICE_NAME = "МТС Защитник"

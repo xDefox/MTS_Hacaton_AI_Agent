@@ -45,7 +45,12 @@ from .assests import (
     ROUTING_CHAT_LABEL,
     CONNECTED_STATUS,
     DISCONNECT_BUTTON_TEXT,
+    OPEN_BUTTON_TEXT,
     CATALOG_TITLE,
+    AVAILABLE_TITLE,
+    CONNECTED_SECTION_TITLE,
+    EMPTY_CONNECTED,
+    PROFILE_LABEL,
     EXTRA_SERVICE_NAME,
     EXTRA_SERVICE_TAGLINE,
     EXTRA_SERVICE_ICON,
@@ -95,6 +100,7 @@ def main(page: ft.Page):
         page.window.height = 720
 
     connected_phone = {"value": ""}
+    service_on = {"value": False}
     tg_on = {"value": False}
     login_phone = ft.TextField(
         label="Номер телефона",
@@ -129,18 +135,9 @@ def main(page: ft.Page):
             )
         except httpx.RequestError:
             pass
-        header_subtitle.value = f"| {HEADER_CONNECT_SUBTITLE}"
-        status_bar.content = ft.Text(
-            f"Вы вошли как {format_phone(phone)}",
-            color=MTS_GRAY,
-            size=13,
-        )
-        login_gate.visible = False
-        catalog.visible = True
-        features_panel.visible = False
-        back_btn.visible = False
-        service_card.visible = True
-        page.update()
+        profile_phone.value = format_phone(phone)
+        profile_chip.visible = True
+        _show_catalog()
 
     def close_dialog(_=None):
         pop = getattr(page, "pop_dialog", None)
@@ -186,42 +183,62 @@ def main(page: ft.Page):
         except httpx.RequestError:
             pass
         close_dialog()
+        service_on["value"] = True
+        _open_settings(reset_tg=not tg_on["value"])
+        _start_poll()
+
+    def open_connected(_=None):
+        """Уже подключена — сразу в настройки, без повторного «Подключить»."""
+        _open_settings(reset_tg=False)
+
+    def _sync_catalog_cards():
+        on = service_on["value"]
+        service_card.visible = not on
+        connected_card.visible = on
+        connected_empty.visible = not on
+
+    def _show_catalog():
+        login_gate.visible = False
+        login_wrap.visible = False
+        catalog.visible = True
+        features_panel.visible = False
+        back_btn.visible = False
+        extra_card.visible = True
+        _sync_catalog_cards()
+        header_subtitle.value = f"| {CATALOG_TITLE}"
+        page.title = "МТС — Услуги"
+        page.update()
+
+    def _open_settings(*, reset_tg: bool):
+        phone = connected_phone["value"]
         header_subtitle.value = f"| {SERVICE_NAME}"
         page.title = f"МТС — {SERVICE_NAME}"
         login_gate.visible = False
+        login_wrap.visible = False
         catalog.visible = False
         features_panel.visible = True
         back_btn.visible = True
-        service_card.visible = True
-        tg_on["value"] = False
-        tg_on["stop"] = False
-        tg_active.value = False
-        tg_status_text.value = f"Ожидает /start · {format_phone(phone)}"
-        tg_status_text.color = MTS_GRAY
-        status_bar.content = ft.Row(
-            [
-                ft.Icon(ft.Icons.CHECK, color=MTS_RED, size=18),
-                ft.Text(
-                    f"{CONNECTED_STATUS}: {format_phone(phone)}",
-                    color=MTS_DARK,
-                    weight=ft.FontWeight.W_600,
-                ),
-            ],
-            spacing=8,
-            wrap=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
+        if reset_tg:
+            tg_on["value"] = False
+            tg_on["stop"] = False
+            tg_active.value = False
+            tg_status_text.value = f"Ожидает /start · {format_phone(phone)}"
+            tg_status_text.color = MTS_GRAY
         page.update()
-        _start_poll()
+
+    def go_catalog(_=None):
+        """Стрелка назад: услуга остаётся подключённой."""
+        _show_catalog()
 
     def disconnect_service(_=None):
-        """Снять услугу и вернуться в каталог (номер в профиле остаётся)."""
+        """Снять услугу: вернуть карточку в «Доступные»."""
         tg_on["stop"] = True
         tg_on["polling"] = False
         tg_on["value"] = False
         tg_active.value = False
         tg_status_text.value = "После /start в боте здесь загорится «Активировано»"
         tg_status_text.color = MTS_GRAY
+        service_on["value"] = False
         phone = connected_phone["value"]
         try:
             if phone:
@@ -232,20 +249,7 @@ def main(page: ft.Page):
                 )
         except httpx.RequestError:
             pass
-        login_gate.visible = False
-        catalog.visible = True
-        features_panel.visible = False
-        back_btn.visible = False
-        service_card.visible = True
-        extra_card.visible = True
-        header_subtitle.value = f"| {HEADER_CONNECT_SUBTITLE}"
-        page.title = "МТС — Подключение услуги"
-        status_bar.content = ft.Text(
-            f"Вы вошли как {format_phone(phone)}" if phone else "Выберите услугу",
-            color=MTS_GRAY,
-            size=13,
-        )
-        page.update()
+        _show_catalog()
 
     def _bot_start_url(phone: str) -> str:
         digits = normalize_phone(phone)
@@ -398,10 +402,9 @@ def main(page: ft.Page):
                             [
                                 ft.Text(
                                     title,
-                                    size=17,
+                                    size=16,
                                     weight=ft.FontWeight.BOLD,
                                     color=MTS_DARK,
-                                    text_align=ft.TextAlign.CENTER,
                                     max_lines=2,
                                     overflow=ft.TextOverflow.ELLIPSIS,
                                 ),
@@ -409,14 +412,13 @@ def main(page: ft.Page):
                                     tagline,
                                     size=12,
                                     color=MTS_GRAY,
-                                    text_align=ft.TextAlign.CENTER,
                                     max_lines=2,
                                 ),
                                 action,
                             ],
                             spacing=10,
                             alignment=ft.MainAxisAlignment.START,
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            horizontal_alignment=ft.CrossAxisAlignment.START,
                             tight=True,
                         ),
                     ),
@@ -460,29 +462,78 @@ def main(page: ft.Page):
         title=EXTRA_SERVICE_NAME,
         tagline=EXTRA_SERVICE_TAGLINE,
         action=extra_button,
-        header_bg="#8A8A8E",
+        header_bg="#5C5C5E",
     )
-    catalog = ft.Column(
-        [
-            ft.Text(
-                CATALOG_TITLE,
-                size=18,
-                weight=ft.FontWeight.W_600,
-                color=MTS_DARK,
-                text_align=ft.TextAlign.CENTER,
-            ),
-            ft.Row(
-                [service_card, extra_card],
-                wrap=True,
-                spacing=20,
-                alignment=ft.MainAxisAlignment.CENTER,
-                vertical_alignment=ft.CrossAxisAlignment.START,
-            ),
-        ],
+    open_button = ft.FilledButton(
+        OPEN_BUTTON_TEXT,
+        style=ft.ButtonStyle(
+            bgcolor=MTS_RED,
+            overlay_color=MTS_RED_DARK,
+            color=MTS_WHITE,
+            shape=ft.RoundedRectangleBorder(radius=12),
+            padding=ft.Padding.symmetric(horizontal=24, vertical=10),
+        ),
+        on_click=lambda e: open_connected(),
+    )
+    connected_icon_box, connected_card = _catalog_card(
+        icon=SERVICE_ICON,
+        title=SERVICE_NAME,
+        tagline="Подключена · настройки и Telegram",
+        action=open_button,
+        header_bg=MTS_RED,
+    )
+    connected_card.visible = False
+    connected_empty = ft.Text(
+        EMPTY_CONNECTED,
+        size=13,
+        color=MTS_GRAY,
+    )
+    connected_row = ft.Row(
+        [connected_card],
+        wrap=True,
         spacing=16,
-        tight=True,
+        alignment=ft.MainAxisAlignment.CENTER,
+        vertical_alignment=ft.CrossAxisAlignment.START,
+    )
+    available_row = ft.Row(
+        [service_card, extra_card],
+        wrap=True,
+        spacing=16,
+        alignment=ft.MainAxisAlignment.CENTER,
+        vertical_alignment=ft.CrossAxisAlignment.START,
+    )
+    catalog = ft.Container(
         visible=False,
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        padding=ft.Padding.symmetric(horizontal=24, vertical=20),
+        content=ft.Column(
+            [
+                ft.Text(
+                    CATALOG_TITLE,
+                    size=22,
+                    weight=ft.FontWeight.BOLD,
+                    color=MTS_DARK,
+                ),
+                ft.Text(
+                    CONNECTED_SECTION_TITLE,
+                    size=14,
+                    weight=ft.FontWeight.W_600,
+                    color=MTS_DARK,
+                ),
+                connected_empty,
+                connected_row,
+                ft.Container(height=8),
+                ft.Text(
+                    AVAILABLE_TITLE,
+                    size=14,
+                    weight=ft.FontWeight.W_600,
+                    color=MTS_DARK,
+                ),
+                available_row,
+            ],
+            spacing=12,
+            tight=True,
+            horizontal_alignment=ft.CrossAxisAlignment.START,
+        ),
     )
 
     login_btn = ft.FilledButton(
@@ -522,17 +573,12 @@ def main(page: ft.Page):
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         ),
     )
-
-    # --- Статусная полоса ------------------------------------------------
-    status_bar = ft.Container(
-        bgcolor=MTS_WHITE,
-        border=ft.Border(top=ft.BorderSide(1, "#E8E8EA")),
-        content=ft.Text(
-            "Введите номер, как в приложении МТС — отдельной авторизации нет",
-            color=MTS_GRAY,
-            size=13,
+    login_wrap = ft.Container(
+        padding=ft.Padding.symmetric(horizontal=16, vertical=40),
+        content=ft.Row(
+            [login_gate],
+            alignment=ft.MainAxisAlignment.CENTER,
         ),
-        padding=ft.Padding.symmetric(horizontal=8, vertical=10),
     )
 
     # --- Функции услуги (видны после подключения) ------------------------
@@ -749,7 +795,7 @@ def main(page: ft.Page):
         icon_color=MTS_WHITE,
         tooltip="К услугам",
         visible=False,
-        on_click=lambda e: disconnect_service(),
+        on_click=lambda e: go_catalog(),
     )
     header_title = ft.Text(
         "МТС",
@@ -761,39 +807,65 @@ def main(page: ft.Page):
         f"| {LOGIN_TITLE}",
         size=15,
         color=MTS_WHITE,
+        max_lines=1,
+        overflow=ft.TextOverflow.ELLIPSIS,
+        expand=True,
+    )
+    profile_label = ft.Text(PROFILE_LABEL, size=10, color=MTS_WHITE)
+    profile_phone = ft.Text("—", size=13, color=MTS_WHITE, weight=ft.FontWeight.W_600)
+    profile_chip = ft.Container(
+        visible=False,
+        bgcolor=MTS_RED_DARK,
+        border_radius=20,
+        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+        content=ft.Row(
+            [
+                ft.Icon(ft.Icons.PERSON, color=MTS_WHITE, size=20),
+                ft.Column(
+                    [
+                        profile_label,
+                        profile_phone,
+                    ],
+                    spacing=0,
+                    tight=True,
+                ),
+            ],
+            spacing=8,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
     )
     header = ft.Container(
         bgcolor=MTS_RED,
-        padding=ft.Padding.symmetric(horizontal=32, vertical=16),
+        padding=ft.Padding.symmetric(horizontal=32, vertical=12),
         content=ft.Row(
             [
                 back_btn,
                 header_title,
                 header_subtitle,
+                profile_chip,
             ],
-            spacing=4,
-            wrap=True,
+            spacing=8,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
     )
 
     stage = ft.Column(
         [
-            login_gate,
+            login_wrap,
             catalog,
             features_panel,
         ],
         tight=True,
-        alignment=ft.MainAxisAlignment.CENTER,
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        spacing=16,
+        alignment=ft.MainAxisAlignment.START,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        spacing=0,
     )
 
     root = ft.Column(
         [
             header,
             stage,
-            status_bar,
         ],
         tight=True,
         spacing=0,
@@ -809,17 +881,24 @@ def main(page: ft.Page):
         mobile = width <= MOBILE_BREAKPOINT
 
         h_pad = 16 if mobile else 32
-        card_w = max(240, min(CARD_SIZE, int(width * 0.88)))
+        card_w = max(200, int(width) - 2 * h_pad) if mobile else CARD_SIZE
         service_card.width = card_w
         extra_card.width = card_w
+        connected_card.width = card_w
         header_icon_box.height = 72 if mobile else 88
         extra_icon_box.height = 72 if mobile else 88
+        connected_icon_box.height = 72 if mobile else 88
+        catalog.padding = ft.Padding.symmetric(horizontal=h_pad, vertical=16 if mobile else 20)
+        available_row.alignment = ft.MainAxisAlignment.CENTER
+        connected_row.alignment = ft.MainAxisAlignment.CENTER
 
         header.padding = ft.Padding.symmetric(
             horizontal=h_pad, vertical=12 if mobile else 16
         )
-        status_bar.padding = ft.Padding.symmetric(horizontal=h_pad, vertical=10)
         header_title.size = 18 if mobile else 22
+        header_subtitle.size = 13 if mobile else 15
+        profile_label.visible = not mobile
+        profile_phone.size = 12 if mobile else 13
 
         more_button.style.padding = ft.Padding.symmetric(
             horizontal=32 if mobile else 24,
@@ -840,6 +919,11 @@ def main(page: ft.Page):
     page.ui = {
         "service_card": service_card,
         "extra_card": extra_card,
+        "connected_card": connected_card,
+        "connected_empty": connected_empty,
+        "open_btn": open_button,
+        "profile": profile_chip,
+        "profile_phone": profile_phone,
         "catalog": catalog,
         "features_panel": features_panel,
         "connect_btn": connect_btn,
@@ -858,7 +942,6 @@ def main(page: ft.Page):
         "header_subtitle": header_subtitle,
         "back_btn": back_btn,
         "stage": stage,
-        "status_bar": status_bar,
         "dialog": details_dialog,
         "dialog_box": dialog_box,
     }
