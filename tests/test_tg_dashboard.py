@@ -105,10 +105,14 @@ def test_demo_greeting_and_call_turn():
         main_keyboard,
     )
 
-    assert demo_greeting_text({"scenarios": False}) == DEFAULT_GREETING
-    assert demo_greeting_text(
+    greet = demo_greeting_text({"scenarios": False})
+    assert DEFAULT_GREETING in greet
+    assert "искусственным интеллектом" in greet.lower()
+    custom = demo_greeting_text(
         {"scenarios": True, "template_greeting": "  Привет от линии!  "}
-    ) == "Привет от линии!"
+    )
+    assert "Привет от линии!" in custom
+    assert "искусственным интеллектом" in custom.lower()
     assert BTN_CALL in [b.text for row in main_keyboard().keyboard for b in row]
 
     card = format_call_turn(

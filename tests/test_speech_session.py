@@ -46,7 +46,7 @@ def test_telegram_rules() -> int:
     return failed
 
 
-async def test_multiturn_mock() -> int:
+async def _multiturn_mock() -> int:
     failed = 0
     print("\n=== multiturn mock ===")
     reset_rules_to_defaults()
@@ -89,6 +89,10 @@ async def test_multiturn_mock() -> int:
     else:
         print("OK   multiturn + telegram rule, no repeated disclosure")
     return failed
+
+
+def test_multiturn_mock() -> None:
+    assert asyncio.run(_multiturn_mock()) == 0
 
 
 def test_session_filter_and_validation() -> int:
@@ -194,7 +198,7 @@ def test_tts_stt_roundtrip() -> int:
 def main() -> None:
     failed = 0
     failed += test_telegram_rules()
-    failed += asyncio.run(test_multiturn_mock())
+    failed += asyncio.run(_multiturn_mock())
     failed += test_session_filter_and_validation()
     failed += test_tts_stt_roundtrip()
     print()

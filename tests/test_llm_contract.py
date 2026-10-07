@@ -169,7 +169,7 @@ def test_dialog_history() -> int:
     return failed
 
 
-async def test_mocked_process_call() -> int:
+async def _mocked_process_call() -> int:
     failed = 0
     print("\n=== mocked process_call ===")
     reset_rules_to_defaults()
@@ -273,6 +273,10 @@ async def test_mocked_process_call() -> int:
         else:
             print("OK   api mock persisted")
     return failed
+
+
+def test_mocked_process_call() -> None:
+    assert asyncio.run(_mocked_process_call()) == 0
 
 
 def test_ready_and_stats() -> int:
@@ -415,7 +419,7 @@ def main() -> None:
     failed = 0
     failed += test_parse_and_extract()
     failed += test_dialog_history()
-    failed += asyncio.run(test_mocked_process_call())
+    failed += asyncio.run(_mocked_process_call())
     failed += test_ready_and_stats()
     failed += test_fast_path_and_compact()
     print()

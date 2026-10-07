@@ -38,8 +38,6 @@ from .assests import (
     TELEGRAM_OPEN_TEXT,
     TELEGRAM_TOGGLE_HINT,
     TELEGRAM_BOT_URL,
-    TRY_SERVICE_TEXT,
-    TRY_SERVICE_HINT,
     FEATURES_TITLE,
     FEATURES,
     ROUTING_TITLE,
@@ -323,7 +321,7 @@ def main(page: ft.Page):
         _show_tab("call")
 
     def _sync_tg_open_url():
-        """Ссылка на кнопке = клиентский <a href> с одноразовым токеном этой сессии."""
+        """Ссылка на кнопке = одноразовый bind_token сессии (не перевыпускаем, пока жив)."""
         phone = connected_phone["value"]
         if phone and not bind_token["value"]:
             bind_token["value"] = _register_line(phone)
@@ -864,25 +862,11 @@ def main(page: ft.Page):
     hist_filter = {"critical": False}
     ui_tab = {"name": "dash"}
 
-    effect_banner_text = ft.Text("", size=12, color=MTS_DARK)
-    effect_banner = ft.Container(
-        visible=True,
-        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
-        bgcolor="#FFF5F5",
-        border_radius=12,
-        border=ft.Border.all(1, "#F5C6C8"),
-        content=effect_banner_text,
-    )
     history_off_hint = ft.Text(
         "История выключена — раздел недоступен, пока не включите галочку.",
         size=12,
         color=MTS_RED,
         visible=False,
-    )
-    tg_status_hint = ft.Text(
-        "Пуши в Telegram: все звонки (если бот подключён)",
-        size=12,
-        color=MTS_GRAY,
     )
     dash_body = ft.Column(spacing=8, tight=True)
     history_list = ft.Column(spacing=8, tight=True)
@@ -964,26 +948,15 @@ def main(page: ft.Page):
         scenarios_status.visible = enabled
         templates_off_hint.visible = not enabled
 
-    def _effect_summary() -> str:
-        routing = ROUTING_LABELS.get(routing_dropdown.value or ROUTING_VOICE, "Голос")
-        bits = [
-            f"Ответ: {routing.lower()}",
-            f"История: {'вкл' if history_check.value else 'выкл'}",
-            f"Шаблоны: {'вкл' if scenarios_switch.value else 'выкл'}",
-            f"Режим: {'строгий' if strict_mode_check.value else 'лояльный'}",
-        ]
-        if notify_critical_check.value:
-            bits.append("TG-пуши: только важные")
-        else:
-            bits.append("TG-пуши: все (если бот есть)")
-        return " · ".join(bits)
-
     def _apply_effects():
-        effect_banner_text.value = _effect_summary()
+        _sync_template_fields()
         history_off_hint.visible = not history_check.value
-        hist_all_btn.disabled = not history_check.value
-        hist_crit_btn.disabled = not history_check.value
-        refresh_hist_btn.disabled = not history_check.value
+        try:
+            hist_all_btn.disabled = not history_check.value
+            hist_crit_btn.disabled = not history_check.value
+            refresh_hist_btn.disabled = not history_check.value
+        except NameError:
+            pass
         if not history_check.value:
             history_list.controls = [
                 ft.Text(
@@ -993,11 +966,6 @@ def main(page: ft.Page):
                 )
             ]
             detail_box.visible = False
-        tg_status_hint.value = (
-            "Пуши в Telegram: только важные"
-            if notify_critical_check.value
-            else "Пуши в Telegram: все звонки (если бот подключён)"
-        )
 
     def _fmt_when(raw) -> str:
         return str(raw or "—").replace("T", " ")[:16]
@@ -1638,6 +1606,8 @@ def main(page: ft.Page):
         tg_active.value = True
         tg_status_text.value = f"Активировано · {format_phone(phone)}"
         tg_status_text.color = MTS_RED
+        # одноразовый ключ уже погашен на бэке — не держим мёртвую ссылку в кнопке
+        bind_token["value"] = ""
         page.update()
 
     def _stop_tg_poll() -> None:
@@ -1705,7 +1675,7 @@ def main(page: ft.Page):
         # Не page.run_thread: executor Flet join'ится при выходе и вешает терминал.
         threading.Thread(target=loop, daemon=True, name="tg-status-poll").start()
 
-    # url= — клиентский переход (телефон); on_click не дублируем (иначе 2 открытия).
+    # url= — клиентский переход; on_click не дублируем (иначе 2 открытия).
     tg_open_btn = ft.FilledButton(
         TELEGRAM_OPEN_TEXT,
         icon=ft.Icons.TELEGRAM,
@@ -1717,24 +1687,6 @@ def main(page: ft.Page):
             shape=ft.RoundedRectangleBorder(radius=12),
             padding=ft.Padding.symmetric(horizontal=20, vertical=12),
         ),
-    )
-    _try_style = ft.ButtonStyle(
-        bgcolor=MTS_DARK,
-        color=MTS_WHITE,
-        shape=ft.RoundedRectangleBorder(radius=12),
-        padding=ft.Padding.symmetric(horizontal=20, vertical=14),
-    )
-    live_try_dash_btn = ft.FilledButton(
-        TRY_SERVICE_TEXT,
-        icon=ft.Icons.PHONE_IN_TALK,
-        on_click=lambda e: _open_live_call(),
-        style=_try_style,
-    )
-    live_try_btn = ft.FilledButton(
-        TRY_SERVICE_TEXT,
-        icon=ft.Icons.PHONE_IN_TALK,
-        on_click=lambda e: _open_live_call(),
-        style=_try_style,
     )
     live_call = LiveCallController(
         page=page,
@@ -1804,22 +1756,6 @@ def main(page: ft.Page):
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.START,
             ),
-            effect_banner,
-            ft.Container(
-                padding=ft.Padding.symmetric(horizontal=14, vertical=12),
-                bgcolor=MTS_WHITE,
-                border_radius=16,
-                border=ft.Border.all(1, "#E8E8EA"),
-                content=ft.Column(
-                    [
-                        ft.Text("Живой диалог", size=15, weight=ft.FontWeight.W_600, color=MTS_DARK),
-                        ft.Text(TRY_SERVICE_HINT, size=12, color=MTS_GRAY),
-                        live_try_dash_btn,
-                    ],
-                    spacing=8,
-                    tight=True,
-                ),
-            ),
             dash_body,
         ],
         spacing=12,
@@ -1883,7 +1819,6 @@ def main(page: ft.Page):
             routing_hint,
             ft.Text(FEATURES_TITLE, size=14, weight=ft.FontWeight.W_600, color=MTS_DARK),
             *setting_rows,
-            effect_banner,
             ft.Text(
                 "Изменения сразу влияют на приложение и бота.",
                 size=12,
@@ -1900,24 +1835,20 @@ def main(page: ft.Page):
                 content=ft.Column(
                     [
                         ft.Text(
-                            "Telegram-бот (опционально)",
+                            "Telegram-бот",
                             size=15,
                             weight=ft.FontWeight.W_600,
                             color=MTS_DARK,
                         ),
                         ft.Row(
                             [tg_active, tg_status_text],
-                            spacing=8,
+                            spacing=10,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        tg_status_hint,
-                        ft.Text(TELEGRAM_TOGGLE_HINT, size=13, color=MTS_GRAY),
+                        ft.Text(TELEGRAM_TOGGLE_HINT, size=12, color=MTS_GRAY),
                         tg_open_btn,
-                        ft.Divider(height=1, color="#E8E8EA"),
-                        ft.Text(TRY_SERVICE_HINT, size=13, color=MTS_GRAY),
-                        live_try_btn,
                     ],
-                    spacing=8,
+                    spacing=10,
                     tight=True,
                 ),
             ),
@@ -1927,43 +1858,6 @@ def main(page: ft.Page):
         tight=True,
         visible=False,
     )
-
-    # вторая ссылка на баннер в дашборде — одна и та же control нельзя в двух местах
-    effect_banner_dash_text = ft.Text("", size=12, color=MTS_DARK)
-    effect_banner_dash = ft.Container(
-        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
-        bgcolor="#FFF5F5",
-        border_radius=12,
-        border=ft.Border.all(1, "#F5C6C8"),
-        content=effect_banner_dash_text,
-    )
-    dash_section.controls[1] = effect_banner_dash
-
-    def _apply_effects_full():
-        _sync_template_fields()
-        text = _effect_summary()
-        effect_banner_text.value = text
-        effect_banner_dash_text.value = text
-        history_off_hint.visible = not history_check.value
-        hist_all_btn.disabled = not history_check.value
-        hist_crit_btn.disabled = not history_check.value
-        refresh_hist_btn.disabled = not history_check.value
-        if not history_check.value:
-            history_list.controls = [
-                ft.Text(
-                    "История выключена в настройках — включите «История звонков и саммари».",
-                    size=13,
-                    color=MTS_GRAY,
-                )
-            ]
-            detail_box.visible = False
-        tg_status_hint.value = (
-            "Пуши в Telegram: только важные"
-            if notify_critical_check.value
-            else "Пуши в Telegram: все звонки (если бот подключён)"
-        )
-
-    _apply_effects = _apply_effects_full
 
     features_panel = ft.Container(
         visible=False,
@@ -2169,8 +2063,7 @@ def main(page: ft.Page):
         "new_scenario_text": new_scenario_text,
         "new_scenario_kind": new_scenario_kind,
         "history_list": history_list,
-        "effect_banner": effect_banner_text,
-        "effect_banner_box": effect_banner,
+        "history_off_hint": history_off_hint,
     }
 
     page.on_resize = lambda e: apply_responsive(e.width, e.height)

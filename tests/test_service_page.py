@@ -132,6 +132,9 @@ def _fake_httpx_post(url, json=None, params=None, timeout=None, **kwargs):
         out = dict(row)
         out["phone"] = phone
         return _FakeResp(200, out)
+    if path.endswith("/telegram/register"):
+        phone = "".join(c for c in str(body.get("phone") or "") if c.isdigit())
+        return _FakeResp(200, {"phone": phone, "bind_token": f"b{phone[-8:] or 'demo0000'}"})
     return _FakeResp(200, {"ok": True})
 
 
@@ -402,11 +405,12 @@ def test_telegram_option_only_after_connect():
     assert ui["tg_open_btn"] in _flatten(ui["features_panel"])
     assert ui["tg_open_btn"].content == TELEGRAM_OPEN_TEXT
     assert ui["tg_active"].value is False
-    assert not getattr(ui["tg_open_btn"], "url", None), "url на кнопке открывает Telegram второй раз"
+    tg_url = getattr(ui["tg_open_btn"], "url", None) or ""
+    assert "start=b" in tg_url, "кнопка ведёт в бота с одноразовым bind-токеном"
 
     ui["history_check"].value = False
     ui["history_check"].on_change(None)
-    assert "История: выкл" in (ui["effect_banner"].value or "")
+    assert ui["history_off_hint"].visible
     ui["tab_hist"].on_click(None)
     assert ui["hist_section"].visible
     hist_text = " ".join(
@@ -415,11 +419,6 @@ def test_telegram_option_only_after_connect():
         if isinstance(c, ft.Text)
     )
     assert "выключена" in hist_text.lower()
-
-    ui["tg_open_btn"].on_click(None)
-    assert page.launched
-    assert "start=79001112233" in page.launched[-1]
-    assert page.launched.count(page.launched[-1]) == 1
 
     ui["back_btn"].on_click(None)
     assert ui["catalog"].visible
