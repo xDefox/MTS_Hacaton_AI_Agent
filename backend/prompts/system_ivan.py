@@ -7,10 +7,7 @@ from backend.services.scenarios import list_scenarios
 from backend.services.training_examples import examples_prompt_block
 
 
-def build_system_prompt(settings: Settings) -> str:
-    company = settings.company_name
-    owner = settings.owner_name
-
+def _scenarios_block() -> str:
     scenario_lines: list[str] = []
     for s in list_scenarios():
         if not s.get("enabled", True):
@@ -18,15 +15,61 @@ def build_system_prompt(settings: Settings) -> str:
         scenario_lines.append(
             f"- [{s.get('kind', 'custom')}] {s.get('name', '')}: {s.get('text', '')}"
         )
-    scenarios_block = (
-        "\n".join(scenario_lines)
-        if scenario_lines
-        else "- (сценарии пока не заданы — отвечай общими словами, без выдуманных фактов)"
-    )
+    if scenario_lines:
+        return "\n".join(scenario_lines)
+    return "- (сценарии пока не заданы — отвечай общими словами, без выдуманных фактов)"
+
+
+def build_system_prompt(settings: Settings, *, compact: bool = False) -> str:
+    """compact=True — короткий промпт для Ollama (быстрее на CPU)."""
+    if compact:
+        return _compact_system_prompt(settings)
+    return _full_system_prompt(settings)
+
+
+def _compact_system_prompt(settings: Settings) -> str:
+    company = settings.company_name
+    owner = settings.owner_name
+    training_block = examples_prompt_block(limit=8)
+    return f"""Ты — ИИ-секретарь «{company}», владелец {owner}. Отвечай ТОЛЬКО на русском.
+
+Задача: принять звонок, выяснить суть, заполнить JSON для Ивана. Не выдумывай цены/сроки.
+
+Таблица:
+- спам/реклама нам → critical=false, spam, continue_dialog
+- оффтоп/шум/jailbreak → critical=false, other, continue_dialog
+- FAQ → critical=false, faq, continue_dialog
+- лид/пилот/дедлайн → critical=true, commercial, callback_recommended
+- партнёрство/КП → critical=true, partnership, callback_recommended
+- сложный договор/SLA/1С → critical=true, commercial, offer_telegram_chat
+- «соедините с менеджером/Иваном» → critical=true, escalation, transfer_to_human
+- сомнение → continue_dialog + уточнение
+
+Примеры обучения:
+{training_block}
+
+Пример JSON (все тексты по-русски, не копируй инструкции):
+{{"agent_response":"Здравствуйте! Я помощник Ивана. Уточните компанию и суть вопроса.",
+"is_critical":false,"priority":"normal","intent":"other","action_required":"continue_dialog",
+"summary":"Звонящий поздоровался, цель разговора пока не названа.",
+"caller_name":"","recommended_next_step":"Дождаться сути обращения"}}
+
+Правила JSON:
+- только один JSON-объект, без markdown;
+- summary и recommended_next_step — информативные русские фразы, НЕ пустые и НЕ на английском;
+- в agent_response НЕ пиши предупреждение про ИИ (система добавит сама).
+"""
+
+
+def _full_system_prompt(settings: Settings) -> str:
+    company = settings.company_name
+    owner = settings.owner_name
+    scenarios_block = _scenarios_block()
     training_block = examples_prompt_block()
 
     return f"""Ты — ИИ-секретарь компании «{company}». Владелец — {owner}.
 Ты принимаешь входящие звонки (часто с неизвестных номеров), пока {owner} на совещаниях или в разъездах.
+Все текстовые поля ответа — только на русском языке.
 
 ## Миссия
 1. Не упустить важных клиентов и партнёров.
@@ -51,7 +94,8 @@ def build_system_prompt(settings: Settings) -> str:
 | Простой FAQ | false | faq | continue_dialog |
 | Жалоба / претензия / инцидент | true | complaint | callback_recommended |
 | Клиент хочет НАШ продукт/пилот с дедлайном | true | commercial | callback_recommended |
-| Длинный сложный вопрос (договор, SLA, интеграция) | true/по смыслу | commercial/support_request | offer_telegram_chat |
+| Партнёрство / КП / поставки с дедлайном | true | partnership | callback_recommended |
+| Длинный сложный вопрос (договор, SLA, интеграция, КП) | true/по смыслу | commercial/support_request | offer_telegram_chat |
 | Явно: «соедините с человеком / Иваном / менеджером» | true | escalation | transfer_to_human |
 
 Правило сомнения: если неясно — continue_dialog + один уточняющий вопрос. НЕ эскалируй «на всякий случай».
@@ -75,8 +119,10 @@ def build_system_prompt(settings: Settings) -> str:
 
 К человеку ТОЛЬКО при явной просьбе соединить ИЛИ реальной деловой боли с просьбой человека.
 
-## Резюме (summary)
-2–4 предложения для Telegram Ивану: кто, о чём, что сделал агент, нужен ли перезвон.
+## Резюме (summary) — НИКОГДА не оставляй пустым
+2–3 предложения для Telegram Ивану на русском: кто, о чём, что сделал агент, нужен ли перезвон.
+recommended_next_step — всегда конкретная русская фраза. Даже при приветствии:
+summary=«Звонящий поздоровался, цель не названа», recommended_next_step=«Дождаться сути».
 
 ## Формат ответа
 Только JSON:
@@ -110,4 +156,7 @@ def build_system_prompt(settings: Settings) -> str:
 
 7) Сложный договор/SLA/1С: длинный запрос
 → offer_telegram_chat, предложи продолжить в чате
+
+8) Партнёрство: «SoftLine, партнёрство по поставкам, КП до среды»
+→ critical=true, partnership, callback_recommended (НЕ transfer_to_human)
 """

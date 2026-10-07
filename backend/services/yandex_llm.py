@@ -127,21 +127,78 @@ def _extract_text(result: Any) -> str:
     return str(result)
 
 
+def _nonempty(value: Any, default: str) -> str:
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
+_EN_JUNK = (
+    "sentences for",
+    "concrete next",
+    "for ivan",
+    "non-empty",
+    "must be",
+    "next step",
+    "2-3 sentences",
+    "caller message",
+)
+
+
+def _is_bad_text_field(value: str | None) -> bool:
+    """Пусто / английский мусор / инструкция из промпта вместо ответа."""
+    text = (value or "").strip()
+    if not text:
+        return True
+    low = text.lower()
+    if any(marker in low for marker in _EN_JUNK):
+        return True
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return True
+    cyr = sum(1 for c in letters if "а" <= c.lower() <= "я" or c.lower() == "ё")
+    return (cyr / len(letters)) < 0.35
+
+
+def _default_next_step(action: str, is_critical: bool) -> str:
+    mapping = {
+        "transfer_to_human": "Срочно принять звонок или перезвонить",
+        "callback_recommended": "Перезвонить клиенту в ближайшее время",
+        "offer_telegram_chat": "Продолжить разбор в Telegram-чате",
+        "continue_dialog": (
+            "Проверить резюме" if is_critical else "Дождаться уточнения сути звонка"
+        ),
+    }
+    return mapping.get(action, "Просмотреть резюме")
+
+
 def _parse_output(raw_text: str) -> AgentLLMOutput:
     cleaned = raw_text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     data = json.loads(cleaned)
     if isinstance(data, dict):
-        # Маленькие модели иногда пропускают поля — добиваем безопасными дефолтами
-        data.setdefault("caller_name", "")
-        data.setdefault("recommended_next_step", "Просмотреть резюме")
-        data.setdefault("summary", data.get("agent_response", "")[:240] or "Без резюме")
-        data.setdefault("agent_response", "Здравствуйте! Чем могу помочь?")
+        # Маленькие модели часто отдают "" или копируют английские подсказки
+        agent = _nonempty(data.get("agent_response"), "Здравствуйте! Чем могу помочь?")
+        if _is_bad_text_field(agent):
+            agent = "Здравствуйте! Чем могу помочь?"
+        action = _nonempty(data.get("action_required"), "continue_dialog")
+        is_critical = bool(data.get("is_critical", False))
+        data["agent_response"] = agent
+        data["caller_name"] = "" if data.get("caller_name") is None else str(data.get("caller_name"))
+        next_step = str(data.get("recommended_next_step") or "").strip()
+        if _is_bad_text_field(next_step):
+            next_step = _default_next_step(action, is_critical)
+        data["recommended_next_step"] = next_step
+        summary = str(data.get("summary") or "").strip()
+        if _is_bad_text_field(summary):
+            summary = f"Обращение: {agent[:200]}" if agent else "Без резюме — уточнить цель звонка"
+        data["summary"] = summary
         data.setdefault("is_critical", False)
         data.setdefault("priority", "normal")
         data.setdefault("intent", "other")
-        data.setdefault("action_required", "continue_dialog")
+        data["action_required"] = action
     return AgentLLMOutput.model_validate(data)
 
 

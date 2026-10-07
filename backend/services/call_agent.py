@@ -47,17 +47,17 @@ def apply_routing_rules(request: CallRequest, response: CallResponse) -> CallRes
     action = _safe_action(rule.action_required)
     if action is not None:
         updates["action_required"] = action
+    msg = (request.user_message or "")[:180]
     if rule.is_critical is False:
-        updates["recommended_next_step"] = "По правилу маршрутизации: не эскалировать"
+        updates["recommended_next_step"] = "Не эскалировать — низкий приоритет"
         updates["summary"] = (
-            f"Правило «{rule.name}»: нерабочее/низкий приоритет. "
-            f"Текст: {request.user_message[:180]}"
+            f"Низкий приоритет («{rule.name}»). Текст звонящего: {msg or '—'}."
         )
     elif rule.is_critical is True:
-        updates["recommended_next_step"] = "Срочно: правило горячей линии / эскалация"
-        updates.setdefault(
-            "summary",
-            f"Правило «{rule.name}»: нужна реакция Ивана. Текст: {request.user_message[:180]}",
+        updates["recommended_next_step"] = "Срочно: нужна реакция Ивана"
+        updates["summary"] = (
+            f"Важное обращение («{rule.name}»). Текст: {msg or '—'}. "
+            f"Действие: {rule.action_required or 'уточнить'}."
         )
 
     if not updates:
