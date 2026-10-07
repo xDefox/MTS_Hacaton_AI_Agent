@@ -193,10 +193,12 @@ async def _full_pipeline_two_turns() -> tuple[str, str]:
         )
 
     sid = f"tpl-pipe-{uuid.uuid4().hex[:8]}"
+    # Как в TG-демо и живом звонке: предупреждение звучит в самом приветствии
+    greeting = f"Внимание: вы общаетесь с искусственным интеллектом. {USER_GREETING}"
     with patch("backend.services.call_agent.process_call_with_yandex", new=AsyncMock(side_effect=fake)):
         r1 = await process_incoming_call(CallRequest(session_id=sid, user_message="Сколько стоит сайт?",
-                                                     dialog_history=[{"role": "assistant", "text": USER_GREETING}]))
-        hist = [{"role": "assistant", "text": USER_GREETING},
+                                                     dialog_history=[{"role": "assistant", "text": greeting}]))
+        hist = [{"role": "assistant", "text": greeting},
                 {"role": "user", "text": "Сколько стоит сайт?"},
                 {"role": "assistant", "text": r1.agent_response}]
         r2 = await process_incoming_call(CallRequest(session_id=sid, user_message="А чат-бот?",
@@ -207,8 +209,9 @@ async def _full_pipeline_two_turns() -> tuple[str, str]:
 def test_pipeline() -> None:
     print("\n=== полный конвейер, 2 реплики ===")
     first, second = asyncio.run(_full_pipeline_two_turns())
-    check("конвейер: 1-я с предупреждением", first.lower().count(DISCLOSURE) == 1, first)
-    check("конвейер: приветствие не повторяется после шаблона", "здравствуйте" not in first.lower(), first)
+    check("конвейер: после приветствия-с-предупреждением ответ без него", DISCLOSURE not in first.lower(), first)
+    check("конвейер: приветствие не повторяется", "здравствуйте" not in first.lower(), first)
+    check("конвейер: факт из шаблона на месте", "40 000" in first, first)
     check("конвейер: 2-я без предупреждения и «я ИИ»",
           DISCLOSURE not in second.lower() and "секретарь" not in second.lower(), second)
 

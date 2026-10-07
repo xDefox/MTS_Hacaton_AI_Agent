@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Живой звонок — ИИ-секретарь МТС</title>
+<style>
+  :root { --red:#E30611; --dark:#1D2023; --gray:#626C77; --bg:#F2F3F7; --line:#E8E8EA; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif; background:var(--bg); color:var(--dark); }
+  .wrap { max-width:560px; margin:0 auto; padding:24px 16px 32px; }
+  .card { background:#fff; border-radius:20px; padding:20px; border:1px solid var(--line); }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--gray); font-size:13px; margin-bottom:16px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  input { flex:1; padding:10px 12px; border-radius:12px; border:1px solid var(--line); font-size:15px; }
+  .status { display:flex; align-items:center; gap:10px; margin:18px 0 10px; font-size:15px; min-height:24px; }
+  .dot { width:12px; height:12px; border-radius:50%; background:#C7CBD1; flex:none; }
+  .dot.listen { background:#26CD58; } .dot.speak { background:var(--red); animation:pulse 1s infinite; }
+  .dot.think { background:#FAC031; animation:pulse 1s infinite; } .dot.agent { background:#0070E5; }
+  @keyframes pulse { 50% { opacity:.35; } }
+  .meter { height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
+  .meter > div { height:100%; width:0; background:var(--red); transition:width .08s; }
+  .timer { margin-left:auto; color:var(--gray); font-variant-numeric:tabular-nums; }
+  .btn { width:100%; margin-top:16px; padding:16px; border:0; border-radius:16px; font-size:17px; font-weight:600; cursor:pointer; color:#fff; background:#26CD58; }
+  .btn.hang { background:var(--red); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .log { margin-top:16px; display:flex; flex-direction:column; gap:8px; max-height:46vh; overflow-y:auto; }
+  .msg { padding:10px 12px; border-radius:14px; font-size:14px; line-height:1.4; max-width:88%; white-space:pre-wrap; }
+  .msg.user { align-self:flex-end; background:var(--dark); color:#fff; }
+  .msg.agent { align-self:flex-start; background:var(--bg); }
+  .msg.sys { align-self:center; background:none; color:var(--gray); font-size:12px; }
+  .tag { display:inline-block; margin-top:4px; font-size:11px; color:var(--gray); }
+  .tag.crit { color:var(--red); font-weight:600; }
+  .typed { margin-top:12px; display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>📞 Живой звонок</h1>
+    <div class="sub">ИИ-секретарь Ивана · говорите как по телефону, паузы определяются сами</div>
+    <div class="row">
+      <input id="phone" placeholder="Номер линии МТС (из приложения)" inputmode="tel">
+    </div>
+    <div class="status"><span class="dot" id="dot"></span><span id="state">Готов к звонку</span><span class="timer" id="timer"></span></div>
+    <div class="meter"><div id="level"></div></div>
+    <button class="btn" id="callBtn">Позвонить</button>
+    <div class="row typed" id="typedRow">
+      <input id="typed" placeholder="…или напишите реплику текстом">
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+<script src="/call/live_vad.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+$("phone").value = params.get("phone") || localStorage.getItem("liveCallPhone") || "";
+
+const TARGET_RATE = 16000;
+
+let ws = null, ctx = null, stream = null, proc = null, player = null;
+let state = "idle", pendingAudioFormat = "ogg", callStart = 0, timerId = null;
+const vad = LiveVad.createVad();
+let bargedPlayer = null;
+
+function setState(s, label) {
+  state = s;
+  const map = { idle:"", listen:"listen", speech:"speak", think:"think", agent:"agent" };
+  $("dot").className = "dot " + (map[s] || "");
+  $("state").textContent = label;
+}
+function addMsg(kind, text, tag, crit) {
+  const el = document.createElement("div");
+  el.className = "msg " + kind;
+  el.textContent = text;
+  if (tag) { const t = document.createElement("div"); t.className = "tag" + (crit ? " crit" : ""); t.textContent = tag; el.appendChild(t); }
+  $("log").appendChild(el);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+const ACTION_LABELS = {
+  continue_dialog:"продолжаем разговор", transfer_to_human:"перевод на Ивана",
+  callback_recommended:"Иван перезвонит", offer_telegram_chat:"предложен чат в Telegram",
+};
+
+function downsample(input, rate) {
+  if (rate === TARGET_RATE) return input.slice();
+  const ratio = rate / TARGET_RATE, out = new Float32Array(Math.floor(input.length / ratio));
+  for (let i = 0; i < out.length; i++) {
+    const a = Math.floor(i * ratio), b = Math.min(input.length, Math.floor((i + 1) * ratio));
+    let sum = 0; for (let j = a; j < b; j++) sum += input[j];
+    out[i] = sum / Math.max(1, b - a);
+  }
+  return out;
+}
+function toWav(chunks) {
+  const len = chunks.reduce((n, c) => n + c.length, 0);
+  const buf = new ArrayBuffer(44 + len * 2), v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + len * 2, true); str(8, "WAVE"); str(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, TARGET_RATE, true); v.setUint32(28, TARGET_RATE * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, len * 2, true);
+  let o = 44;
+  for (const c of chunks) for (let i = 0; i < c.length; i++, o += 2) {
+    const s = Math.max(-1, Math.min(1, c[i])); v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return buf;
+}
+
+// Ложное перебивание (гул, кашель) — агент договаривает с того же места
+function resumeAgent() {
+  const p = bargedPlayer; bargedPlayer = null;
+  if (!p || p !== player || p.ended) return false;
+  setState("agent", "Агент говорит… (можно перебить)");
+  p.play().catch(() => setState("listen", "Слушаю…"));
+  return true;
+}
+
+function onFrame(e) {
+  const raw = e.inputBuffer.getChannelData(0);
+  const frame = downsample(raw, ctx.sampleRate);
+  const frameMs = (raw.length / ctx.sampleRate) * 1000;
+  const rms = LiveVad.rmsOf(frame);
+  $("level").style.width = Math.min(100, rms * 900) + "%";
+
+  if (state === "think" || state === "idle") return;
+  const ev = vad.feed(frame, rms, frameMs, state === "agent" ? "agent" : "listen", performance.now());
+  if (!ev) return;
+  if (ev.type === "speech_start") {
+    if (ev.bargeIn && player) { player.pause(); bargedPlayer = player; addMsg("sys", "вы перебили агента"); }
+    setState("speech", "Говорите…");
+  } else if (ev.type === "noise") {
+    if (!resumeAgent()) setState("listen", "Слушаю… (шумно, подстроился)");
+  } else if (ev.type === "too_short") {
+    if (!resumeAgent()) setState("listen", "Слушаю…");
+  } else if (ev.type === "utterance") {
+    bargedPlayer = null;
+    ws.send(toWav(ev.chunks));
+    setState("think", "Распознаю…");
+  }
+}
+
+function playAgentAudio(bytes) {
+  if (state === "idle") return;
+  if (player) player.pause();
+  const mime = pendingAudioFormat === "wav" ? "audio/wav" : "audio/ogg";
+  player = new Audio(URL.createObjectURL(new Blob([bytes], { type: mime })));
+  setState("agent", "Агент говорит… (можно перебить)");
+  vad.agentStarted(performance.now());
+  player.onended = () => { if (state === "agent") setState("listen", "Слушаю…"); };
+  player.play().catch(() => { if (state === "agent") setState("listen", "Слушаю… (браузер не дал включить звук)"); });
+}
+
+function onMessage(ev) {
+  if (ev.data instanceof ArrayBuffer) { playAgentAudio(ev.data); return; }
+  const m = JSON.parse(ev.data);
+  if (m.type === "session") addMsg("sys", "сессия " + m.session_id);
+  else if (m.type === "transcript") {
+    addMsg("user", m.text || "(не расслышал)");
+    setState("think", "Агент думает…");
+  } else if (m.type === "status") setState("think", m.state === "recognizing" ? "Распознаю…" : "Агент думает…");
+  else if (m.type === "agent") {
+    const tag = m.action ? (ACTION_LABELS[m.action] || m.action) + (m.is_critical ? " · важно" : "") : "";
+    addMsg("agent", m.text, tag, m.is_critical);
+  } else if (m.type === "audio") pendingAudioFormat = m.format;
+  else if (m.type === "audio_unavailable") setState("listen", "Слушаю… (голос агента недоступен)");
+  else if (m.type === "transfer") addMsg("sys", "📲 Иван получил уведомление о переводе");
+  else if (m.type === "error") { addMsg("sys", "⚠️ " + m.message); setState("listen", "Слушаю…"); }
+  else if (m.type === "ended") addMsg("sys", "звонок завершён, реплик: " + m.turns);
+}
+
+async function startCall() {
+  const phone = $("phone").value.trim();
+  localStorage.setItem("liveCallPhone", phone);
+  $("callBtn").disabled = true;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 },
+    });
+  } catch (err) {
+    addMsg("sys", "Нет доступа к микрофону: " + err.message + ". Можно писать текстом.");
+  }
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/api/v1/live_call/ws?phone=${encodeURIComponent(phone)}`);
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = onMessage;
+  ws.onclose = () => stopCall(false);
+  ws.onopen = () => {
+    $("log").innerHTML = "";
+    vad.reset();
+    if (stream) {
+      ctx = new AudioContext();
+      const src = ctx.createMediaStreamSource(stream);
+      proc = ctx.createScriptProcessor(4096, 1, 1);
+      proc.onaudioprocess = onFrame;
+      src.connect(proc); proc.connect(ctx.destination);
+    }
+    callStart = Date.now();
+    timerId = setInterval(() => {
+      const s = Math.floor((Date.now() - callStart) / 1000);
+      $("timer").textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+    }, 500);
+    $("typedRow").style.display = "flex";
+    $("callBtn").textContent = "Завершить"; $("callBtn").className = "btn hang"; $("callBtn").disabled = false;
+    setState("think", "Соединяю…");
+  };
+}
+
+function stopCall(sendHangup = true) {
+  if (sendHangup && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type:"hangup" }));
+  if (player) player.pause();
+  if (proc) proc.disconnect();
+  if (ctx) ctx.close();
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  clearInterval(timerId);
+  proc = ctx = stream = null;
+  $("level").style.width = "0";
+  $("typedRow").style.display = "none";
+  $("callBtn").textContent = "Позвонить"; $("callBtn").className = "btn"; $("callBtn").disabled = false;
+  setState("idle", "Звонок завершён");
+}
+
+$("callBtn").onclick = () => (state === "idle" ? startCall() : stopCall());
+$("typed").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !e.target.value.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (player) player.pause();
+  vad.reset();
+  ws.send(JSON.stringify({ type:"text", text:e.target.value.trim() }));
+  e.target.value = "";
+  setState("think", "Агент думает…");
+});
+</script>
+</body>
+</html>

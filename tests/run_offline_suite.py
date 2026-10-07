@@ -18,6 +18,8 @@ SUITE = [
     "tests/test_llm_contract.py",
     "tests/test_speech_session.py",
     "tests/test_templates.py",
+    "tests/test_live_call.py",
+    "tests/test_barge_in.py",
     "tests/smoke_tz_backend.py",
 ]
 

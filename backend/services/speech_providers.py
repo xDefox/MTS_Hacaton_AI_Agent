@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from backend.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# SAPI-движок pyttsx3 живёт в COM-потоке, где создан: из другого потока runAndWait зависает
+_LOCAL_TTS_THREAD = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-tts")
 
 
 class SpeechError(RuntimeError):
@@ -57,6 +61,30 @@ async def _speechkit_or_empty(
         raise
 
 
+def _transcript_score(text: str) -> int:
+    # На шуме SpeechKit скорее теряет слова, чем выдумывает: больше слов — разборчивее
+    return sum(1 for w in text.split() if sum(ch.isalpha() for ch in w) >= 2)
+
+
+async def _best_of_two(cleaned_job, original_job) -> str:
+    """Очищенная и исходная запись распознаются параллельно; берём разборчивее."""
+    cleaned, original = await asyncio.gather(cleaned_job, original_job, return_exceptions=True)
+    if isinstance(cleaned, Exception) and isinstance(original, Exception):
+        raise cleaned
+    if isinstance(cleaned, Exception):
+        return original
+    if isinstance(original, Exception):
+        return cleaned
+    pick = cleaned if _transcript_score(cleaned) >= _transcript_score(original) else original
+    logger.info(
+        "STT best-of-two: cleaned=%r original=%r -> %s",
+        cleaned[:80],
+        original[:80],
+        "cleaned" if pick is cleaned else "original",
+    )
+    return pick
+
+
 async def transcribe_bytes(
     audio: bytes,
     *,
@@ -79,10 +107,13 @@ async def transcribe_bytes(
                 payload, fmt, rate = cleaned, "lpcm", SAMPLE_RATE
 
         try:
-            text = await _speechkit_or_empty(payload, fmt, lang, rate)
-            if not text and payload is not audio:
-                logger.info("Empty transcript after cleanup, retry with original audio")
+            if payload is audio:
                 text = await _speechkit_or_empty(audio, audio_format, lang, sample_rate_hertz)
+            else:
+                text = await _best_of_two(
+                    _speechkit_or_empty(payload, fmt, lang, rate),
+                    _speechkit_or_empty(audio, audio_format, lang, sample_rate_hertz),
+                )
             if not text:
                 # Тишина/шум: Whisper тут не поможет, а его загрузка — десятки секунд
                 logger.info("SpeechKit: no speech recognized, skip local fallback")
@@ -93,18 +124,26 @@ async def transcribe_bytes(
     return await _transcribe_local(audio, lang=lang, filename=filename)
 
 
-async def synthesize_agent_audio(text: str) -> tuple[bytes, str, str]:
-    """Returns (audio_bytes, ext ogg|wav, engine_name)."""
+async def synthesize_agent_audio(
+    text: str, *, yandex_timeout: float | None = None
+) -> tuple[bytes, str, str]:
+    """Returns (audio_bytes, ext ogg|wav, engine_name).
+
+    yandex_timeout — сколько ждать SpeechKit, прежде чем перейти на локальный голос.
+    """
     settings = get_settings()
     provider = (settings.tts_provider or "local").strip().lower()
     if provider == "yandex":
         from backend.services.speechkit_stt import SpeechKitError, synthesize_ogg
 
         try:
-            audio = await synthesize_ogg(
-                text, voice=settings.tts_voice, lang=settings.tts_lang
+            audio = await asyncio.wait_for(
+                synthesize_ogg(text, voice=settings.tts_voice, lang=settings.tts_lang),
+                timeout=yandex_timeout,
             )
             return audio, "ogg", "yandex-speechkit"
+        except asyncio.TimeoutError:
+            logger.warning("SpeechKit TTS timeout after %ss, fallback to local", yandex_timeout)
         except Exception as exc:  # noqa: BLE001 — SpeechKit недоступен → локальный голос
             logger.warning("SpeechKit TTS failed, fallback to local: %s", exc)
 
@@ -113,7 +152,7 @@ async def synthesize_agent_audio(text: str) -> tuple[bytes, str, str]:
     timeout = max(5.0, float(get_settings().tts_timeout_sec))
     try:
         audio = await asyncio.wait_for(
-            asyncio.to_thread(synthesize_wav_local, text),
+            asyncio.get_running_loop().run_in_executor(_LOCAL_TTS_THREAD, synthesize_wav_local, text),
             timeout=timeout,
         )
     except asyncio.TimeoutError as exc:
