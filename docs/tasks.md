@@ -154,11 +154,19 @@ TG-демо = turn-based эмуляция трубки. SIP = тот же core, 
 # .env: YC_FOLDER_ID, YC_API_KEY (или local fallback STT/TTS)
 pip install -r requirements.txt
 uvicorn backend.main:app --reload --port 8000
+# Веб-UI (по умолчанию http://0.0.0.0:8550 → браузер)
 python -m frontend.app
+# Desktop-окно: FLET_VIEW=app python -m frontend.app
 python -m frontend.tg_bot
+# QR = лёгкий веб МТС на uvicorn :8000 (/app), не Flet (:8550 ~10MB):
+#   .\scripts\start_demo_tunnel.ps1
+python scripts/make_demo_qr.py && python scripts/build_presentation.py
 ```
 
 `GET /ready` → желательно `demo_ready=true` при полном Yandex-стеке.
+
+**QR** → `https://…trycloudflare.com` (лёгкая HTML ~8KB). Flet на :8550 — только экран демо.  
+**Telegram:** только ключ из приложения. Голый `/start` — отказ.
 
 ---
 

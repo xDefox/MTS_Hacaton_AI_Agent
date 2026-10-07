@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 from pptx import Presentation
@@ -12,8 +14,12 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from make_demo_qr import build_qr  # noqa: E402
+
 OUT = ROOT / "docs" / "presentation_track1.pptx"
 OUT_FALLBACK = ROOT / "docs" / "presentation_track1_pitch.pptx"
+QR_PATH = ROOT / "docs" / "demo_qr.png"
 
 RED = RGBColor(0xE3, 0x06, 0x11)
 RED_DARK = RGBColor(0xB3, 0x00, 0x0D)
@@ -149,8 +155,9 @@ def build() -> Path:
     prs.slide_width = W
     prs.slide_height = H
     blank = prs.slide_layouts[6]
-    total = 12
+    total = 13
     n = 0
+    qr_file, demo_link = build_qr()
 
     def page():
         nonlocal n
@@ -520,7 +527,48 @@ def build() -> Path:
         _p(bb.text_frame, b, size=13, color=GRAY, space_after=0, first=True)
     _footer(s, page())
 
-    # ——— 12. CLOSE + ASK ———
+    # ——— 12. TRY IT (QR = Flet / МТС веб, не бот) ———
+    s = prs.slides.add_slide(blank)
+    _bg(s)
+    _brand_bar(s, "Попробуйте сами · приложение МТС")
+    _headline(
+        s,
+        "Откройте веб-приложение по QR",
+        "Лёгкая страница МТС на телефоне. Telegram — только кнопка с личным ключом.",
+    )
+    _round(s, Inches(0.55), Inches(1.85), Inches(6.4), Inches(4.6), CARD)
+    left = _textbox(s, Inches(0.85), Inches(2.15), Inches(5.8), Inches(4.0))
+    tf = left.text_frame
+    tf.word_wrap = True
+    _p(tf, "Как зайти", size=18, bold=True, color=DARK, space_after=10, first=True)
+    lines = (
+        "1. Сканируйте QR → сайт МТС",
+        "2. Номер → согласие → Продолжить",
+        "3. «Перейти в Telegram» — личный ключ",
+        "4. Подтвердить → демо-звонок в боте",
+        "",
+        f"Ссылка: {demo_link}",
+        "",
+        "Лёгкий веб (~8KB), не Flet 10MB.",
+        "Перед защитой: tunnel на :8000.",
+    )
+    for line in lines:
+        muted = line.startswith("QR ") or line.startswith("Жюри")
+        _p(tf, line, size=14, color=GRAY if muted else DARK, space_after=6)
+    _round(s, Inches(7.3), Inches(1.85), Inches(5.3), Inches(4.6), CARD)
+    if qr_file.is_file():
+        s.shapes.add_picture(
+            str(qr_file),
+            Inches(8.15),
+            Inches(2.25),
+            width=Inches(3.6),
+            height=Inches(3.6),
+        )
+    url_box = _textbox(s, Inches(7.5), Inches(5.95), Inches(4.9), Inches(0.35))
+    _p(url_box.text_frame, demo_link, size=11, color=MUTED, align=PP_ALIGN.CENTER, space_after=0, first=True)
+    _footer(s, page())
+
+    # ——— 13. CLOSE + ASK ———
     s = prs.slides.add_slide(blank)
     _bg(s, DARK)
     _rect(s, 0, 0, Inches(0.28), H, RED)
@@ -532,7 +580,7 @@ def build() -> Path:
     _p(tf, "МТС получает услугу в своих каналах.", size=32, bold=True, color=WHITE, space_after=18)
     _p(
         tf,
-        "Дальше — живое демо. Вопросы после.",
+        "Дальше — живое демо и QR. Вопросы после.",
         size=18,
         color=RGBColor(0xC8, 0xC8, 0xCE),
         space_after=0,

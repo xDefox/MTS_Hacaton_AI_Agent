@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>МТС · Умный секретарь</title>
+  <style>
+    :root {
+      --mts-red: #e30611;
+      --mts-red-dark: #b3000d;
+      --bg: #f3f3f5;
+      --card: #fff;
+      --text: #1a1a1a;
+      --muted: #6b6b76;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100dvh;
+    }
+    header {
+      background: var(--mts-red); color: #fff; padding: 14px 18px;
+      font-weight: 600; font-size: 15px;
+    }
+    main { padding: 24px 16px 40px; max-width: 420px; margin: 0 auto; }
+    .card {
+      background: var(--card); border-radius: 16px; padding: 22px 18px;
+      box-shadow: 0 8px 28px rgba(0,0,0,.08);
+    }
+    .brand { color: var(--mts-red); font-weight: 800; font-size: 28px; letter-spacing: .02em; }
+    h1 { font-size: 20px; margin: 10px 0 6px; }
+    p.hint { color: var(--muted); font-size: 13px; line-height: 1.4; margin: 0 0 18px; }
+    label { display:block; font-size: 13px; margin-bottom: 6px; color: var(--muted); }
+    input[type=tel], input[type=text] {
+      width: 100%; padding: 14px 12px; border: 1px solid #ddd; border-radius: 12px;
+      font-size: 16px; margin-bottom: 14px;
+    }
+    .check { display:flex; gap:10px; align-items:flex-start; font-size: 13px; margin: 8px 0 16px; }
+    .check input { margin-top: 3px; }
+    button {
+      width: 100%; border: 0; border-radius: 12px; padding: 14px;
+      background: var(--mts-red); color: #fff; font-size: 16px; font-weight: 600;
+    }
+    button:disabled { opacity: .4; }
+    button.secondary { background: #222; margin-top: 10px; }
+    button.ghost { background: transparent; color: var(--mts-red); margin-top: 8px; }
+    .err { color: var(--mts-red); font-size: 13px; min-height: 1.2em; margin-bottom: 8px; }
+    .ok { color: #0a7a34; font-size: 13px; }
+    .hidden { display: none; }
+    .status {
+      background: #fafafa; border-radius: 12px; padding: 12px; font-size: 14px;
+      margin: 12px 0; line-height: 1.45;
+    }
+    a.tg {
+      display: block; text-align: center; text-decoration: none;
+      background: #2AABEE; color: #fff; border-radius: 12px; padding: 14px;
+      font-weight: 600; margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <header id="hdr">МТС | Вход в приложение</header>
+  <main>
+    <section id="login" class="card">
+      <div class="brand">МТС</div>
+      <h1>Умный секретарь</h1>
+      <p class="hint">Лёгкая веб-версия для телефона. Полный UI — на экране демо.</p>
+      <label for="phone">Номер линии</label>
+      <input id="phone" type="tel" inputmode="tel" placeholder="+7 9…" autocomplete="tel" />
+      <label class="check">
+        <input id="consent" type="checkbox" />
+        <span>Согласен на обработку данных и условия оферты</span>
+      </label>
+      <div class="err" id="loginErr"></div>
+      <button id="btnEnter" disabled>Продолжить</button>
+    </section>
+
+    <section id="home" class="card hidden">
+      <div class="brand">МТС</div>
+      <h1>Услуга на линии</h1>
+      <div class="status" id="lineStatus">—</div>
+      <p class="hint">Telegram подключается только по личной ссылке с ключом.</p>
+      <a class="tg" id="tgLink" href="#" target="_blank" rel="noopener">Перейти в Telegram</a>
+      <button class="secondary" id="btnRefresh">Обновить статус</button>
+      <button class="ghost" id="btnOut">Выйти</button>
+      <div class="err" id="homeErr"></div>
+      <div class="ok" id="homeOk"></div>
+    </section>
+  </main>
+  <script>
+    const BOT = (window.TG_BOT_URL || "https://t.me/MtsSmartCallBot").replace(/\/$/, "");
+    const API = "";  // same origin (uvicorn)
+
+    const $ = (id) => document.getElementById(id);
+    const phoneEl = $("phone");
+    const consent = $("consent");
+    const btnEnter = $("btnEnter");
+    const loginErr = $("loginErr");
+    const homeErr = $("homeErr");
+    const homeOk = $("homeOk");
+
+    function digits(raw) {
+      let d = String(raw || "").replace(/\D/g, "");
+      if (d.length === 11 && d.startsWith("8")) d = "7" + d.slice(1);
+      return d;
+    }
+    function fmt(d) {
+      d = digits(d);
+      if (d.length === 11 && d.startsWith("7"))
+        return `+7 (${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7,9)}-${d.slice(9,11)}`;
+      return d;
+    }
+    function syncEnter() {
+      btnEnter.disabled = !(consent.checked && digits(phoneEl.value).length >= 10);
+    }
+    phoneEl.addEventListener("input", syncEnter);
+    consent.addEventListener("change", syncEnter);
+
+    async function api(path, opts = {}) {
+      const res = await fetch(API + path, {
+        headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+        ...opts,
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text }; }
+      if (!res.ok) throw new Error((data && (data.detail || data.message)) || res.statusText);
+      return data;
+    }
+
+    function showHome(phone, token, status) {
+      $("login").classList.add("hidden");
+      $("home").classList.remove("hidden");
+      $("hdr").textContent = "МТС | Умный секретарь";
+      const activated = !!(status && status.activated);
+      $("lineStatus").innerHTML =
+        `<b>${fmt(phone)}</b><br>` +
+        (activated ? "Telegram: активирован" : "Telegram: ожидает переход по ссылке");
+      const start = token ? `?start=${encodeURIComponent(token)}` : "";
+      $("tgLink").href = `${BOT}${start}`;
+      localStorage.setItem("mts_phone", phone);
+      if (token) localStorage.setItem("mts_token", token);
+    }
+
+    async function register(phone) {
+      const st = await api("/api/v1/telegram/register", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+      return st;
+    }
+
+    btnEnter.addEventListener("click", async () => {
+      loginErr.textContent = "";
+      const phone = digits(phoneEl.value);
+      if (phone.length < 10) { loginErr.textContent = "Введите номер"; return; }
+      if (!consent.checked) { loginErr.textContent = "Нужно согласие"; return; }
+      btnEnter.disabled = true;
+      try {
+        await api("/api/v1/service/settings", {
+          method: "POST",
+          body: JSON.stringify({ phone, connected: true }),
+        }).catch(() => null);
+        const st = await register(phone);
+        showHome(phone, st.bind_token || "", st);
+        homeOk.textContent = "Линия подключена";
+      } catch (e) {
+        loginErr.textContent = String(e.message || e);
+      } finally {
+        syncEnter();
+      }
+    });
+
+    $("btnRefresh").addEventListener("click", async () => {
+      homeErr.textContent = "";
+      homeOk.textContent = "";
+      const phone = localStorage.getItem("mts_phone") || digits(phoneEl.value);
+      try {
+        const st = await api(`/api/v1/telegram/status?phone=${encodeURIComponent(phone)}`);
+        // свежий токен если ещё не активирован
+        let token = localStorage.getItem("mts_token") || "";
+        if (!st.activated) {
+          const reg = await register(phone);
+          token = reg.bind_token || token;
+        }
+        showHome(phone, token, st);
+        homeOk.textContent = st.activated ? "Канал Telegram активен" : "Откройте ссылку в Telegram";
+      } catch (e) {
+        homeErr.textContent = String(e.message || e);
+      }
+    });
+
+    $("btnOut").addEventListener("click", () => {
+      localStorage.removeItem("mts_phone");
+      localStorage.removeItem("mts_token");
+      location.reload();
+    });
+
+    // restore
+    (async () => {
+      const phone = localStorage.getItem("mts_phone");
+      if (!phone) return;
+      try {
+        const st = await api(`/api/v1/telegram/status?phone=${encodeURIComponent(phone)}`);
+        let token = localStorage.getItem("mts_token") || "";
+        if (!st.activated) {
+          const reg = await register(phone);
+          token = reg.bind_token || token;
+        }
+        showHome(phone, token, st);
+      } catch (_) { /* stay on login */ }
+    })();
+  </script>
+</body>
+</html>

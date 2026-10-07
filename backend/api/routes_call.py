@@ -48,11 +48,12 @@ from backend.services.speechkit_stt import guess_audio_format
 from backend.services.telegram_notify import (
     activate_line,
     add_subscriber,
+    bind_token_for_phone,
     deactivate_line,
-    last_pending_phone,
     line_status,
     list_notifications,
     notify_ivan_if_needed,
+    phone_for_bind_token,
     register_line,
 )
 from backend.services.training_examples import (
@@ -78,8 +79,9 @@ router = APIRouter(prefix="/api/v1", tags=["calls"])
 
 
 class TelegramSubscribe(BaseModel):
-    chat_id: int = Field(..., description="Telegram chat_id Ивана после /start")
-    phone: str = Field(default="", description="Номер линии из приложения МТС / заглушки")
+    chat_id: int = Field(..., description="Telegram chat_id после подтверждения привязки")
+    phone: str = Field(default="", description="Номер линии (обязателен — без чужих pending)")
+    bind_token: str = Field(default="", description="Одноразовый токен из приложения")
 
 
 class TelegramRegister(BaseModel):
@@ -101,20 +103,32 @@ class ServiceSettingsBody(BaseModel):
 
 @router.post("/telegram/register")
 def telegram_register(body: TelegramRegister) -> dict:
-    """Фронт: заглушка номера МТС до /start в боте."""
+    """Фронт: заглушка номера МТС + одноразовый bind_token для deep link."""
     try:
         phone = register_line(body.phone)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Укажите номер телефона") from exc
-    return line_status(phone)
+    status = line_status(phone)
+    status["bind_token"] = bind_token_for_phone(phone)
+    return status
 
 
 @router.post("/telegram/subscribe")
 def telegram_subscribe(body: TelegramSubscribe) -> dict:
-    """Бот /start: услуга активна на номере."""
-    phone = body.phone or last_pending_phone()
+    """Бот: привязка ТОЛЬКО по одноразовому bind_token из приложения МТС."""
+    token = (body.bind_token or "").strip()
+    if not token:
+        raise HTTPException(
+            status_code=403,
+            detail="Привязка только по ссылке из приложения МТС (одноразовый ключ).",
+        )
+    phone = phone_for_bind_token(token)
     if not phone:
-        raise HTTPException(status_code=400, detail="Нет номера линии")
+        raise HTTPException(
+            status_code=400,
+            detail="Ключ недействителен или истёк. Снова нажмите «Перейти в Telegram» в приложении.",
+        )
+    # Тело.phone игнорируем — номер берём только из токена (нельзя подменить).
     activate_line(phone, body.chat_id)
     add_subscriber(body.chat_id)
     return line_status(phone)

@@ -53,7 +53,10 @@ CONSENT_DOCS = "Политика обработки персональных д�
 
 # Переключатель подключения Telegram-бота (CJM: интеграция «в один клик»)
 TELEGRAM_TOGGLE_TEXT = "Подключить Telegram-бота"
-TELEGRAM_TOGGLE_HINT = "Уведомления о звонках и саммари «в один клик»"
+TELEGRAM_TOGGLE_HINT = (
+    "Только по личной ссылке из приложения (одноразовый ключ). "
+    "Голый /start бота не активирует услугу."
+)
 TELEGRAM_OPEN_TEXT = "Перейти в Telegram-бота"
 # Ссылку можно переопределить переменной окружения TG_BOT_URL
 TELEGRAM_BOT_URL = os.getenv(

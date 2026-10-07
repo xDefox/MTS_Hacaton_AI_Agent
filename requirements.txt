@@ -26,5 +26,9 @@ flet>=0.25.0
 aiogram>=3.13.0
 requests>=2.32.0
 
+# === Docs / pitch (QR на слайд для жюри) ===
+qrcode[pil]>=7.4.0
+python-pptx>=0.6.21
+
 # === Tests ===
 pytest>=8.0.0

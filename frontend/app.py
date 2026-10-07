@@ -8,7 +8,6 @@ Flet 0.86 · стиль МТС · адаптив под десктоп, план
 import os
 import threading
 import time
-import webbrowser
 
 import flet as ft
 import httpx
@@ -140,6 +139,7 @@ def main(page: ft.Page):
         page.window.height = 720
 
     connected_phone = {"value": ""}
+    bind_token = {"value": ""}
     service_on = {"value": False}
     tg_on = {"value": False}
     login_phone = _mts_text_field(
@@ -167,14 +167,7 @@ def main(page: ft.Page):
             return
         login_error.visible = False
         connected_phone["value"] = phone
-        try:
-            httpx.post(
-                f"{API_BASE}/api/v1/telegram/register",
-                json={"phone": phone},
-                timeout=3.0,
-            )
-        except httpx.RequestError:
-            pass
+        bind_token["value"] = _register_line(phone)
         profile_phone.value = format_phone(phone)
         profile_chip.visible = True
         # Восстановить подключение услуги с бэка (тот же номер — услуга уже есть).
@@ -218,14 +211,7 @@ def main(page: ft.Page):
             return
         consent_checkbox.error = False
         consent_error.visible = False
-        try:
-            httpx.post(
-                f"{API_BASE}/api/v1/telegram/register",
-                json={"phone": phone},
-                timeout=3.0,
-            )
-        except httpx.RequestError:
-            pass
+        bind_token["value"] = _register_line(phone)
         close_dialog()
         service_on["value"] = True
         _open_settings(reset_tg=not tg_on["value"], connected=True)
@@ -263,6 +249,7 @@ def main(page: ft.Page):
         features_panel.visible = True
         back_btn.visible = True
         _load_settings()
+        _sync_tg_open_url()
         if reset_tg:
             tg_on["value"] = False
             tg_on["stop"] = False
@@ -297,18 +284,34 @@ def main(page: ft.Page):
             pass
         _show_catalog()
 
-    def _bot_start_url(phone: str) -> str:
-        digits = normalize_phone(phone)
-        base = TELEGRAM_BOT_URL.rstrip("/")
-        return f"{base}?start={digits}" if digits else base
+    def _register_line(phone: str) -> str:
+        """Регистрация линии + одноразовый токен (не светим сырой номер в deep link)."""
+        try:
+            resp = httpx.post(
+                f"{API_BASE}/api/v1/telegram/register",
+                json={"phone": phone},
+                timeout=3.0,
+            )
+            if resp.status_code == 200:
+                return str((resp.json() or {}).get("bind_token") or "")
+        except httpx.RequestError:
+            pass
+        return ""
 
-    def open_telegram(_=None):
-        """Один переход: без url= на кнопке, иначе Flet открывает ссылку дважды."""
-        url = _bot_start_url(connected_phone["value"])
-        if not hasattr(page, "session"):
-            page.launch_url(url)
-            return
-        webbrowser.open(url)
+    def _bot_start_url(phone: str = "", token: str = "") -> str:
+        base = TELEGRAM_BOT_URL.rstrip("/")
+        token = (token or bind_token["value"] or "").strip()
+        if token.startswith("b"):
+            return f"{base}?start={token}"
+        # Без токена — голый бот (пользователь введёт свой номер), не чужой pending.
+        return base
+
+    def _sync_tg_open_url():
+        """Ссылка на кнопке = клиентский <a href> с одноразовым токеном этой сессии."""
+        phone = connected_phone["value"]
+        if phone and not bind_token["value"]:
+            bind_token["value"] = _register_line(phone)
+        tg_open_btn.url = _bot_start_url(phone, bind_token["value"])
 
     # --- Согласие, Telegram-бот и кнопка подключения ---------------------
     def on_consent_change(e):
@@ -1680,9 +1683,11 @@ def main(page: ft.Page):
         # Не page.run_thread: executor Flet join'ится при выходе и вешает терминал.
         threading.Thread(target=loop, daemon=True, name="tg-status-poll").start()
 
+    # url= — клиентский переход (телефон); on_click не дублируем (иначе 2 открытия).
     tg_open_btn = ft.FilledButton(
         TELEGRAM_OPEN_TEXT,
         icon=ft.Icons.TELEGRAM,
+        url=_bot_start_url(""),
         style=ft.ButtonStyle(
             bgcolor=MTS_RED,
             overlay_color=MTS_RED_DARK,
@@ -1690,8 +1695,8 @@ def main(page: ft.Page):
             shape=ft.RoundedRectangleBorder(radius=12),
             padding=ft.Padding.symmetric(horizontal=20, vertical=12),
         ),
-        on_click=lambda e: open_telegram(),
     )
+    _sync_tg_open_url()
 
     disconnect_btn = ft.TextButton(
         DISCONNECT_BUTTON_TEXT,
@@ -2100,4 +2105,36 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    # Веб-UI: http://0.0.0.0:8550 (для телефона нужен tunnel: DEMO_WEB_URL)
+    # Desktop: FLET_VIEW=app python -m frontend.app
+    # QR жюри по умолчанию → Telegram (scripts/make_demo_qr.py)
+    import os
+
+    view_raw = (os.getenv("FLET_VIEW") or "web").strip().lower()
+    if view_raw in {"app", "desktop", "flet_app"}:
+        view = ft.AppView.FLET_APP
+    else:
+        view = ft.AppView.WEB_BROWSER
+    port = int(os.getenv("FLET_PORT") or "8550")
+    host = os.getenv("FLET_HOST") or "0.0.0.0"
+    # Flet 0.86: AUTO | CANVAS_KIT | SKWASM (HTML больше нет).
+    # На телефоне первый заход тяжёлый (~10MB JS) — не «мертвый» сайт, а долгая загрузка.
+    renderer_raw = (os.getenv("FLET_WEB_RENDERER") or "auto").strip().lower()
+    renderer_map = {
+        "auto": ft.WebRenderer.AUTO,
+        "canvaskit": ft.WebRenderer.CANVAS_KIT,
+        "canvas_kit": ft.WebRenderer.CANVAS_KIT,
+        "skwasm": ft.WebRenderer.SKWASM,
+    }
+    web_renderer = renderer_map.get(renderer_raw, ft.WebRenderer.AUTO)
+    print(
+        f"Flet UI: view={view.value} renderer={web_renderer.value} "
+        f"http://{host}:{port}/  (API_BASE={API_BASE})"
+    )
+    ft.run(
+        main,
+        view=view,
+        host=host,
+        port=port,
+        web_renderer=web_renderer,
+    )

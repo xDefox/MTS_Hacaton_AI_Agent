@@ -9,15 +9,20 @@ from pathlib import Path
 import httpx
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command, CommandObject
-from aiogram.types import BotCommand, CallbackQuery
+from aiogram.types import (
+    BotCommand,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from dotenv import load_dotenv
 
 from backend.services.service_settings import get_settings as get_line_settings
 from backend.services.telegram_notify import (
     activate_line,
     format_phone,
-    last_pending_phone,
     normalize_phone,
+    phone_for_bind_token,
     phone_for_chat,
 )
 from frontend.tg_call_demo import (
@@ -59,31 +64,72 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 _last_start: dict[int, float] = {}
 
+_LOCKED_HINT = (
+    "<b>МТС · Умный секретарь</b>\n\n"
+    "Канал уведомлений и демо-звонков по вашей линии.\n\n"
+    "Активация — только из приложения МТС:\n"
+    "Услуга → Подключить → «Перейти в Telegram».\n\n"
+    "Без персональной ссылки из приложения доступ закрыт."
+)
 
-def _line_phone(chat_id: int, start_args: str = "") -> str:
-    return (
-        normalize_phone(start_args)
-        or phone_for_chat(chat_id)
-        or last_pending_phone()
-    )
+_WELCOME_BOUND = (
+    "<b>МТС · Умный секретарь</b>\n"
+    "Линия: {phone}\n\n"
+    "Доступны дашборд, история и демо входящего звонка.\n"
+    "Настройки линии — в приложении МТС."
+)
+
+_CONFIRM_BIND = (
+    "<b>МТС · Умный секретарь</b>\n\n"
+    "Подтвердите привязку канала уведомлений\n"
+    "к линии <b>{phone}</b>."
+)
 
 
 def _display_phone(chat_id: int) -> str:
-    return format_phone(phone_for_chat(chat_id) or last_pending_phone())
+    phone = phone_for_chat(chat_id)
+    return format_phone(phone) if phone else "—"
 
 
-async def _activate_via_api(phone: str, chat_id: int) -> None:
+def _bind_confirm_kb(token: str) -> InlineKeyboardMarkup:
+    """callback только с токеном — номер не доверяем из кнопки."""
+    payload = f"bind:yes:{token}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Да, привязать",
+                    callback_data=payload[:64],
+                ),
+                InlineKeyboardButton(text="Нет", callback_data="bind:no"),
+            ]
+        ]
+    )
+
+
+async def _activate_via_api(chat_id: int, bind_token: str) -> tuple[bool, str]:
+    """Привязка только по ключу из приложения. Возвращает (ok, phone|error)."""
+    token = (bind_token or "").strip()
+    if not token:
+        return False, ""
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.post(
                 f"{API_BASE}/api/v1/telegram/subscribe",
-                json={"phone": phone, "chat_id": chat_id},
+                json={"chat_id": chat_id, "bind_token": token, "phone": ""},
             )
         if resp.status_code == 200:
-            return
+            phone = str((resp.json() or {}).get("phone") or "")
+            return True, phone
+        logging.warning("subscribe failed: %s", resp.text[:300])
+        return False, ""
     except httpx.RequestError:
-        logging.warning("API недоступен, пишем линию локально")
-    activate_line(phone, chat_id)
+        logging.warning("API недоступен, пробуем локальный токен")
+        phone = phone_for_bind_token(token)
+        if not phone:
+            return False, ""
+        activate_line(phone, chat_id)
+        return True, phone
 
 
 async def _api_get(path: str, params: dict | None = None):
@@ -92,7 +138,7 @@ async def _api_get(path: str, params: dict | None = None):
 
 
 async def _line_settings_for(chat_id: int) -> dict:
-    phone = phone_for_chat(chat_id) or last_pending_phone()
+    phone = phone_for_chat(chat_id)
     if not phone:
         return get_line_settings("")
     try:
@@ -102,6 +148,14 @@ async def _line_settings_for(chat_id: int) -> dict:
     except httpx.RequestError:
         pass
     return get_line_settings(phone)
+
+
+async def _require_bound_phone(message: types.Message) -> str:
+    phone = phone_for_chat(message.chat.id)
+    if phone:
+        return phone
+    await message.answer(_LOCKED_HINT, parse_mode="HTML", reply_markup=main_keyboard())
+    return ""
 
 
 async def _guard_busy(message: types.Message) -> bool:
@@ -126,12 +180,8 @@ async def _send_history(message: types.Message, *, critical: bool) -> None:
             reply_markup=main_keyboard(),
         )
         return
-    phone = phone_for_chat(message.chat.id) or last_pending_phone()
+    phone = await _require_bound_phone(message)
     if not phone:
-        await message.answer(
-            "Нет номера линии. Откройте приложение МТС или /start с номером.",
-            reply_markup=main_keyboard(),
-        )
         return
     try:
         resp = await _api_get(
@@ -160,12 +210,8 @@ async def _send_history(message: types.Message, *, critical: bool) -> None:
 async def _send_stats(message: types.Message) -> None:
     if await _guard_busy(message):
         return
-    phone = phone_for_chat(message.chat.id) or last_pending_phone()
+    phone = await _require_bound_phone(message)
     if not phone:
-        await message.answer(
-            "Нет номера линии. Откройте приложение МТС или /start с номером.",
-            reply_markup=main_keyboard(),
-        )
         return
     try:
         resp = await _api_get("/api/v1/calls/stats", {"phone": phone})
@@ -197,9 +243,8 @@ async def _send_settings(message: types.Message) -> None:
 
 
 async def _send_detail(message: types.Message, call_id: int) -> None:
-    phone = phone_for_chat(message.chat.id) or last_pending_phone()
+    phone = await _require_bound_phone(message)
     if not phone:
-        await message.answer("Нет номера линии для просмотра карточки.")
         return
     try:
         resp = await _api_get(f"/api/v1/calls/{call_id}", {"phone": phone})
@@ -221,7 +266,9 @@ async def _begin_demo_call(message: types.Message) -> None:
         )
         return
 
-    phone = phone_for_chat(chat_id) or last_pending_phone()
+    phone = await _require_bound_phone(message)
+    if not phone:
+        return
     prefs = await _line_settings_for(chat_id)
     session = start_call_session(chat_id=chat_id, line_phone=phone or "", prefs=prefs)
     greeting = session["greeting"]
@@ -281,16 +328,80 @@ async def cmd_start(message: types.Message, command: CommandObject):
         return
     _last_start[chat_id] = now
 
-    phone = _line_phone(chat_id, command.args or "")
-    if phone:
-        await _activate_via_api(phone, chat_id)
-    display = format_phone(phone) if phone else "—"
-    await message.answer(
-        f"Услуга активна на номере {display}\n"
-        "Дашборд внизу. «Начать звонок» — демо голосового агента.\n"
-        "Настройки услуги — в приложении МТС.",
-        reply_markup=main_keyboard(),
-    )
+    raw = (command.args or "").strip()
+    bound = phone_for_chat(chat_id)
+
+    # Единственный вход: deep link ?start=<bind_token> из приложения.
+    if raw.startswith("b") and len(raw) >= 8:
+        phone = phone_for_bind_token(raw)
+        if not phone:
+            await message.answer(
+                "<b>МТС · Умный секретарь</b>\n\n"
+                "Ссылка недействительна или уже использована.\n"
+                "Откройте приложение МТС и нажмите «Перейти в Telegram» снова.",
+                parse_mode="HTML",
+                reply_markup=main_keyboard(),
+            )
+            return
+        await message.answer(
+            _CONFIRM_BIND.format(phone=format_phone(phone)),
+            parse_mode="HTML",
+            reply_markup=_bind_confirm_kb(raw),
+        )
+        return
+
+    if bound:
+        await message.answer(
+            _WELCOME_BOUND.format(phone=_display_phone(chat_id)),
+            parse_mode="HTML",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    await message.answer(_LOCKED_HINT, parse_mode="HTML", reply_markup=main_keyboard())
+
+
+@dp.callback_query(F.data.startswith("bind:"))
+async def on_bind_confirm(callback: CallbackQuery):
+    data = callback.data or ""
+    if data == "bind:no":
+        await callback.answer("Отменено")
+        await callback.message.answer(
+            "<b>МТС · Умный секретарь</b>\n\n"
+            "Привязка отменена. Вернитесь в приложение МТС, "
+            "если нужно подключить канал уведомлений.",
+            parse_mode="HTML",
+            reply_markup=main_keyboard(),
+        )
+        return
+    # bind:yes:<token>
+    parts = data.split(":", 2)
+    if len(parts) < 3 or parts[1] != "yes":
+        await callback.answer("Некорректно")
+        return
+    token = parts[2].strip()
+    if not token.startswith("b"):
+        await callback.answer("Нет ключа")
+        await callback.message.answer(
+            _LOCKED_HINT, parse_mode="HTML", reply_markup=main_keyboard()
+        )
+        return
+    ok, phone = await _activate_via_api(callback.message.chat.id, token)
+    await callback.answer("Готово" if ok else "Ошибка")
+    if ok and phone:
+        await callback.message.answer(
+            _WELCOME_BOUND.format(phone=format_phone(phone)),
+            parse_mode="HTML",
+            reply_markup=main_keyboard(),
+        )
+    else:
+        await callback.message.answer(
+            "<b>МТС · Умный секретарь</b>\n\n"
+            "Не удалось активировать канал. "
+            "Снова нажмите «Перейти в Telegram» в приложении МТС.",
+            parse_mode="HTML",
+            reply_markup=main_keyboard(),
+        )
 
 
 @dp.message(Command("menu"))
@@ -460,23 +571,39 @@ async def cb_call(query: CallbackQuery):
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=False)
+    # Корпоративное описание в профиле бота (вместо «бот Ивана» в about).
+    try:
+        await bot.set_my_name(name="МТС Умный секретарь")
+    except Exception:
+        logging.warning("set_my_name недоступен — задайте имя в @BotFather")
+    try:
+        await bot.set_my_short_description(
+            short_description="МТС · канал уведомлений и демо линии умного секретаря"
+        )
+        await bot.set_my_description(
+            description=(
+                "Официальный канал услуги «Умный секретарь» МТС.\n\n"
+                "Активация только из приложения МТС: "
+                "Подключить услугу → «Перейти в Telegram».\n"
+                "Без персональной ссылки из приложения бот недоступен."
+            )
+        )
+    except Exception:
+        logging.warning("set_my_description failed")
     await bot.set_my_commands(
         [
-            BotCommand(command="start", description="Активировать услугу"),
-            BotCommand(command="demo_call", description="Начать демо-звонок"),
+            BotCommand(command="start", description="МТС · статус линии"),
+            BotCommand(command="demo_call", description="Демо входящего звонка"),
             BotCommand(command="hangup", description="Завершить демо-звонок"),
-            BotCommand(command="dashboard", description="Аналитика звонков"),
-            BotCommand(command="history", description="Все звонки"),
-            BotCommand(command="important", description="Только важные"),
-            BotCommand(command="settings", description="Настройки из приложения"),
+            BotCommand(command="dashboard", description="Дашборд линии"),
+            BotCommand(command="history", description="История звонков"),
+            BotCommand(command="important", description="Важные звонки"),
+            BotCommand(command="settings", description="Настройки услуги"),
             BotCommand(command="call", description="Карточка: /call 12"),
         ]
     )
     me = await bot.get_me()
-    logging.info(
-        "Бот @%s: demo call / dashboard / history / important / settings",
-        me.username,
-    )
+    logging.info("МТС бот @%s готов", me.username)
     await dp.start_polling(bot)
 
 

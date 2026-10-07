@@ -230,7 +230,7 @@ def format_stats(stats: dict) -> str:
     routine = int(stats.get("routine") or 0)
     share = stats.get("critical_share") or 0
     lines = [
-        "<b>📊 Дашборд Ивана</b>",
+        "<b>📊 МТС · Дашборд линии</b>",
         "",
         f"Всего карточек: <b>{total}</b>",
         f"Важные: <b>{critical}</b> ({share}%)",

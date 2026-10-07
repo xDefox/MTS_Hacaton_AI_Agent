@@ -10,6 +10,7 @@ import html
 import json
 import logging
 import os
+import secrets
 import time
 from datetime import datetime, timezone
 from threading import Lock
@@ -170,8 +171,13 @@ def _save_lines(data: dict) -> None:
     LINES_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _new_bind_token() -> str:
+    # Telegram start payload: [A-Za-z0-9_-]{1,64}
+    return "b" + secrets.token_urlsafe(12).replace("-", "x").replace("_", "y")[:20]
+
+
 def register_line(phone: str) -> str:
-    """Фронт: номер из заглушки МТС. Не сбрасывает уже активный /start."""
+    """Фронт: номер из заглушки МТС. Выдаёт одноразовый bind_token для deep link."""
     phone = normalize_phone(phone)
     if not phone:
         raise ValueError("empty phone")
@@ -181,14 +187,43 @@ def register_line(phone: str) -> str:
         # Повторный вход в приложение не должен гасить Telegram-активацию.
         if "activated" not in row:
             row["activated"] = False
+        row["bind_token"] = _new_bind_token()
+        row["bind_expires"] = time.time() + 30 * 60
         row["updated_at"] = time.time()
         data[phone] = row
         _save_lines(data)
     return phone
 
 
+def bind_token_for_phone(phone: str) -> str:
+    phone = normalize_phone(phone)
+    with _lock:
+        row = _load_lines().get(phone) or {}
+    token = str(row.get("bind_token") or "")
+    expires = float(row.get("bind_expires") or 0)
+    if token and expires > time.time():
+        return token
+    return ""
+
+
+def phone_for_bind_token(token: str) -> str:
+    """Одноразовый токен из приложения → номер. Без токена чужой /start не угадает линию."""
+    token = (token or "").strip()
+    if not token.startswith("b") or len(token) < 8:
+        return ""
+    now = time.time()
+    with _lock:
+        for phone, row in _load_lines().items():
+            if str(row.get("bind_token") or "") != token:
+                continue
+            if float(row.get("bind_expires") or 0) < now:
+                return ""
+            return phone
+    return ""
+
+
 def activate_line(phone: str, chat_id: int) -> str:
-    """Бот /start: услуга активна на этом номере."""
+    """Бот: услуга активна на этом номере только для данного chat_id."""
     phone = normalize_phone(phone)
     if not phone:
         raise ValueError("empty phone")
@@ -197,7 +232,7 @@ def activate_line(phone: str, chat_id: int) -> str:
     with _lock:
         data = _load_lines()
         # Один chat_id → одна активная линия (иначе настройки читаются с чужого номера).
-        for other, row in data.items():
+        for other, row in list(data.items()):
             if other == phone:
                 continue
             if row.get("chat_id") == chat_id:
@@ -210,11 +245,27 @@ def activate_line(phone: str, chat_id: int) -> str:
             "chat_id": chat_id,
             "activated": True,
             "updated_at": now,
+            "bind_token": "",
+            "bind_expires": 0,
         }
         _save_lines(data)
     add_subscriber(chat_id)
     logger.info("Line activated phone=%s chat_id=%s", phone, chat_id)
     return phone
+
+
+def chat_id_for_phone(phone: str) -> int | None:
+    """Только chat_id, явно привязанный к номеру (без чужих pending)."""
+    phone = normalize_phone(phone)
+    with _lock:
+        row = _load_lines().get(phone) or {}
+    if not row.get("activated"):
+        return None
+    cid = row.get("chat_id")
+    try:
+        return int(cid) if cid is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def deactivate_line(phone: str) -> str:
@@ -237,11 +288,16 @@ def line_status(phone: str) -> dict:
     phone = normalize_phone(phone)
     with _lock:
         row = _load_lines().get(phone) or {}
+    token = ""
+    expires = float(row.get("bind_expires") or 0)
+    if expires > time.time():
+        token = str(row.get("bind_token") or "")
     return {
         "phone": phone,
         "display": format_phone(phone),
         "activated": bool(row.get("activated")),
         "chat_id": row.get("chat_id"),
+        "bind_token": token,
     }
 
 
@@ -266,14 +322,8 @@ def phone_for_chat(chat_id: int) -> str:
 
 
 def last_pending_phone() -> str:
-    with _lock:
-        items = list(_load_lines().items())
-    pending = [(phone, row) for phone, row in items if not row.get("activated")]
-    pool = pending or items
-    if not pool:
-        return ""
-    pool.sort(key=lambda item: float(item[1].get("updated_at") or 0))
-    return pool[-1][0]
+    """Устарело: раньше отдавало чужой номер любому /start. Больше не используем."""
+    return ""
 
 
 def add_subscriber(chat_id: int) -> None:
@@ -390,12 +440,17 @@ async def notify_call_report(
     transcript: str | None = None,
 ) -> None:
     token = (os.getenv("TG_BOT_TOKEN") or get_settings().tg_bot_token or "").strip()
-    chats = list_subscribers()
     if not token:
         logger.warning("Telegram skip: нет TG_BOT_TOKEN")
         return
+    # Только владелец линии — не всем из tg_chats.txt (иначе чужие чаты видят чужие звонки).
+    owner = chat_id_for_phone(phone)
+    chats = [owner] if owner is not None else []
     if not chats:
-        logger.warning("Telegram skip: нет подписчиков. Иван должен нажать /start")
+        logger.warning(
+            "Telegram skip: линия %s не привязана к chat_id. Нужен /start из приложения.",
+            phone,
+        )
         return
 
     text = format_call_report(
