@@ -23,8 +23,13 @@ from backend.schemas import (  # noqa: E402
     Intent,
     Priority,
 )
+from backend.config import get_settings  # noqa: E402
+from backend.prompts.system_ivan import build_system_prompt  # noqa: E402
 from backend.services.call_agent import process_incoming_call  # noqa: E402
-from backend.services.local_llm import _extract_json_text  # noqa: E402
+from backend.services.local_llm import (  # noqa: E402
+    _extract_json_text,
+    process_call_with_ollama,
+)
 from backend.services.routing_rules import reset_rules_to_defaults  # noqa: E402
 from backend.services.yandex_llm import (  # noqa: E402
     _build_messages,
@@ -77,6 +82,30 @@ def test_parse_and_extract() -> int:
         failed += 1
     else:
         print("OK   noisy parse")
+
+    # empty strings must be filled (qwen2.5:3b habit)
+    emptyish = _ok_json(summary="", recommended_next_step="", caller_name="")
+    parsed_empty = _parse_output(emptyish)
+    if not parsed_empty.summary.strip() or not parsed_empty.recommended_next_step.strip():
+        print("FAIL empty-field coalesce", parsed_empty.summary, parsed_empty.recommended_next_step)
+        failed += 1
+    else:
+        print("OK   empty-field coalesce")
+
+    # English prompt leakage → replace with Russian
+    en_junk = _ok_json(
+        summary="2-3 sentences for Ivan",
+        recommended_next_step="concrete next step",
+    )
+    parsed_en = _parse_output(en_junk)
+    if "sentences for" in parsed_en.summary.lower() or "concrete" in parsed_en.recommended_next_step.lower():
+        print("FAIL en-junk sanitize", parsed_en.summary, parsed_en.recommended_next_step)
+        failed += 1
+    elif not any("а" <= c.lower() <= "я" or c.lower() == "ё" for c in parsed_en.summary):
+        print("FAIL en-junk not russian", parsed_en.summary)
+        failed += 1
+    else:
+        print("OK   en-junk sanitize")
 
     # disclosure dedupe
     raw = ensure_ai_disclosure(
@@ -267,12 +296,59 @@ def test_ready_and_stats() -> int:
     return failed
 
 
+def test_fast_path_and_compact() -> int:
+    failed = 0
+    print("\n=== fast-path + compact prompt ===")
+    reset_rules_to_defaults()
+    compact = build_system_prompt(get_settings(), compact=True)
+    if "sentences for Ivan" in compact or "concrete next step" in compact:
+        print("FAIL compact has english placeholders")
+        failed += 1
+    elif "только на русском" not in compact.lower() and "на русском" not in compact.lower():
+        print("FAIL compact missing russian requirement")
+        failed += 1
+    else:
+        print("OK   compact prompt russian")
+
+    async def _run() -> CallResponse:
+        settings = get_settings().model_copy(update={"ollama_rules_fast_path": True})
+        return await process_call_with_ollama(
+            CallRequest(
+                session_id="fast-spam",
+                user_message="Продаём контекстную рекламу, давайте подключим вас сегодня",
+            ),
+            settings=settings,
+        )
+
+    resp = asyncio.run(_run())
+    if not str(resp.model).startswith("rules:"):
+        print("FAIL fast-path model", resp.model)
+        failed += 1
+    elif _is_bad_summary(resp.summary) or _is_bad_summary(resp.recommended_next_step):
+        print("FAIL fast-path russian fields", resp.summary, resp.recommended_next_step)
+        failed += 1
+    elif resp.action_required != ActionRequired.continue_dialog:
+        print("FAIL fast-path action", resp.action_required)
+        failed += 1
+    else:
+        print("OK   fast-path spam (opt-in)", resp.model)
+    return failed
+
+
+def _is_bad_summary(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return True
+    return not any("а" <= c.lower() <= "я" or c.lower() == "ё" for c in t)
+
+
 def main() -> None:
     failed = 0
     failed += test_parse_and_extract()
     failed += test_dialog_history()
     failed += asyncio.run(test_mocked_process_call())
     failed += test_ready_and_stats()
+    failed += test_fast_path_and_compact()
     print()
     if failed:
         print(f"FAILED: {failed}")

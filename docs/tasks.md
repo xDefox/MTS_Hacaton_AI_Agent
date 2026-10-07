@@ -7,6 +7,16 @@
 **Обязательные требования трека 1 для хакатон-прототипа — закрываем на бэке.**  
 Полный «операторский прод» из лекций (SIP-биллинг, юр. шифрование PDn, Realtime-труба) — **нет**, это narrative на защите, не код.
 
+### Как читать ТЗ vs слова жюри/организаторов
+
+| Источник | Что сказано | Как делаем |
+|---|---|---|
+| CJM + лекция · обязательное | ИИ понял суть; маршрутизация голос/чат; **настройка правил**; история; ≤5 мин; конфиденциальность | LLM (`ollama`) + `routing_rules` поверх ответа + SQLite/API |
+| Лекция · оператор МТС | «Внешне» через каналы МТС; локальный контур данных; **не ухудшать QoS** (задержка на голосовом тракте) | На защите: narrative «встраиваемся в бот/ЛК МТС»; локальный Ollama (не зарубежное облако) |
+| Лекция · прототип | Можно один cloud API на хакатоне, но показать путь в инфру оператора | Демо = local LLM; слайд = ЦОД/SIP/биллинг |
+| Организаторы (устно) | **Строго LLM** на демо | `OLLAMA_RULES_FAST_PATH=false` (default): каждый `process_call` идёт в модель; правила только post-guard |
+| Скорость | В ТЗ нет «SLA ответа LLM», есть QoS линии + «быстро просматривает резюме» Иван | Короткий промпт, `num_ctx`/`num_predict`, `keep_alive`; GPU/`7b` опционально |
+
 | ТЗ (обязательное) | Бэк | Как закрыто |
 |---|---|---|
 | Простота ≤ 5 мин | да | `/ready` чеклист + README /health |
@@ -48,8 +58,18 @@ pip install -r requirements.txt
 uvicorn backend.main:app --reload --port 8000
 ```
 4. Проверка: `GET /ready` → `ready=true` (и `demo_ready=true` когда Ollama с моделью)
-5. Smoke без Ollama: `python tests/run_offline_suite.py`
-6. Smoke LLM (когда Ollama готова): `python tests/smoke_hard_routing.py`
+### Ollama только на D: (в проекте)
+
+Модели **не на C:** — в `D:\HUH\MTS_Hacaton_AI_Agent\.ollama\models`.
+
+```powershell
+cd D:\HUH\MTS_Hacaton_AI_Agent
+powershell -ExecutionPolicy Bypass -File .\scripts\start_ollama_d.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\pull_qwen_d.ps1
+```
+
+Нужно свободно **~3+ ГБ на D:**. Архив `ollama-windows-amd64` после установки можно удалить с C:\Users\...\Downloads, чтобы освободить место.
+
 
 Опционально в `.env`:
 ```

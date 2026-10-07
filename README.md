@@ -63,13 +63,15 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 7. Готовность: http://127.0.0.1:8000/ready → `ready=true`, после pull модели `demo_ready=true`  
 8. Health: http://127.0.0.1:8000/health → `llm_provider=local`
 
-### Smoke-тесты
+### Ollama только на D: (важно при полном C:)
 
-```bash
-python tests/run_offline_suite.py
-# когда Ollama готова:
-python tests/smoke_hard_routing.py
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_ollama_d.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\pull_qwen.ps1
 ```
+
+Модели: `D:\HUH\MTS_Hacaton_AI_Agent\.ollama\models`  
+Кэш Whisper: `D:\HUH\MTS_Hacaton_AI_Agent\.cache\huggingface`
 
 ### Голос (локально по умолчанию)
 

@@ -275,6 +275,14 @@ ROUTING_CASES: list[dict[str, Any]] = [
         "expect_intent": "faq",
     },
     {
+        "id": "noise-alo",
+        "layer": "rules",
+        "user_message": "Ало? Меня слышно?",
+        "expect_critical": False,
+        "expect_action": "continue_dialog",
+        "expect_intent": "other",
+    },
+    {
         "id": "complex-sla",
         "layer": "rules",
         "user_message": "Нужно обсудить SLA, NDA и этапы оплаты по договору",
