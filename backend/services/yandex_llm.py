@@ -147,12 +147,15 @@ def _line_preferences_block(request: CallRequest) -> str:
             "ставь callback_recommended и говори, что Иван перезвонит."
         )
     if prefs.get("scenarios"):
+        from backend.services.service_settings import DEFAULTS as LINE_DEFAULTS
+
         faq = (prefs.get("template_faq") or "").strip()
         greet = (prefs.get("template_greeting") or "").strip()
-        if faq:
+        if faq and faq != LINE_DEFAULTS["template_faq"].strip():
             lines.append(
-                "Шаблоны владельца — это факты, отвечай на их основе своими словами, "
-                "не зачитывай дословно и только если вопрос к ним относится:\n" + faq
+                "Шаблоны владельца этой линии (главнее общих сценариев выше). "
+                "Если вопрос к ним относится — отвечай по ним: факты строго из шаблона, "
+                "формулировка своими словами:\n" + faq
             )
         if greet:
             lines.append(f"Приветствие линии (уже прозвучало в начале, не повторяй): {greet}")
@@ -357,6 +360,25 @@ def _run_yandex_sync(messages: list[dict[str, str]], settings: Settings) -> str:
     return text or ""
 
 
+def _template_answer(request: CallRequest) -> str | None:
+    """Без LLM: шаблон владельца, если вопрос на него похож и шаблоны включены на линии."""
+    from backend.services.scenarios import find_faq_answer
+
+    if request.line_phone:
+        from backend.services.service_settings import get_settings as get_line_settings
+
+        try:
+            if not get_line_settings(request.line_phone).get("scenarios", True):
+                return None
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        return find_faq_answer(request.user_message)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Template lookup failed: %s", exc)
+        return None
+
+
 def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
     """Safe degraded answer so the demo API stays alive if the model fails."""
     from backend.services.routing_rules import classify_human_request
@@ -400,6 +422,12 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
         intent = Intent.support_request
         summary = f"Важное обращение. Текст: {request.user_message[:240]}"
         next_step = "Перезвонить сегодня"
+    elif faq_answer := _template_answer(request):
+        agent_response = faq_answer
+        action = ActionRequired.continue_dialog
+        intent = Intent.faq
+        summary = f"Ответ по шаблону владельца. Вопрос: {request.user_message[:220]}"
+        next_step = "Ничего — ответ дан по шаблону"
     else:
         agent_response = (
             "Здравствуйте! Я помощник компании. Расскажите, пожалуйста, по какому вопросу звоните?"

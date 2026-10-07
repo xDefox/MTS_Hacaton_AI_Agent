@@ -81,14 +81,54 @@ def upsert_scenario(data: dict[str, Any]) -> dict[str, Any]:
         text=clean_template(str(data.get("text") or "")),
         enabled=bool(data.get("enabled", True)),
     )
+    # Порядок = приоритет: свежий шаблон пользователя первым, иначе
+    # приветствие/FAQ по умолчанию перекрывают его (берётся первое включённое).
     for i, existing in enumerate(items):
         if existing.id == sid:
-            items[i] = new
+            content_changed = (existing.text, existing.kind) != (new.text, new.kind)
+            if content_changed:
+                items.pop(i)
+                items.insert(0, new)
+            else:
+                items[i] = new
             save_scenarios(items)
             return asdict(new)
-    items.append(new)
+    items.insert(0, new)
     save_scenarios(items)
     return asdict(new)
+
+
+def find_faq_answer(question: str) -> str | None:
+    """Ближайший по словам включённый FAQ/custom-шаблон (для ответа без LLM)."""
+    words = {w for w in _words(question) if len(w) > 3}
+    if not words:
+        return None
+    best, best_score = None, 0
+    for s in load_scenarios():
+        if not s.enabled or s.kind == "greeting":
+            continue
+        text = clean_template(s.text)
+        if not text:
+            continue
+        stems = {w[:5] for w in _words(f"{s.name} {text}") if len(w) > 3}
+        score = len({w[:5] for w in words} & stems)
+        if score > best_score:
+            best, best_score = text, score
+    return best if best_score >= 1 else None
+
+
+_STOP_WORDS = frozenset(
+    {
+        "если", "можно", "пожалуйста", "здравствуйте", "скажите", "подскажите",
+        "какие", "какой", "какая", "когда", "ваши", "ваша", "ваше", "вашей", "вашего",
+        "есть", "меня", "этот", "этого", "хочу", "хотел", "хотела", "нужно", "очень",
+    }
+)
+
+
+def _words(text: str) -> list[str]:
+    words = "".join(ch if ch.isalnum() else " " for ch in (text or "").lower()).split()
+    return [w for w in words if w not in _STOP_WORDS]
 
 
 def delete_scenario(scenario_id: str) -> bool:

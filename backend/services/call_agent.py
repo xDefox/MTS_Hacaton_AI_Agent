@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from backend.config import Settings, get_settings
 from backend.schemas import ActionRequired, CallRequest, CallResponse, Intent, Priority
@@ -165,11 +166,54 @@ def _fix_contradicting_reply(request: CallRequest, response: CallResponse) -> Ca
     return response.model_copy(update={"agent_response": reply})
 
 
+_SELF_INTRO = re.compile(
+    r"(?:\b(?:я|меня зовут|с вами говорит|вас слушает|на связи)\b[^.!?]{0,60}?"
+    r"(?:\bии\b|искусственн|виртуальн|\bбот|робот|ассистент|помощник|секретар)"
+    r"|\bвы (?:общаетесь|говорите|разговариваете) с\b[^.!?]{0,40}?"
+    r"(?:\bии\b|искусственн|виртуальн|\bбот|робот|ассистент|помощник))",
+    re.IGNORECASE,
+)
+# «чат-бот», «телеграм-бот» — продукт компании, а не вопрос «вы бот?»
+_ASKS_IF_AI = re.compile(
+    r"робот|(?<![-\w])бот(?:ом|у|а)?\b|\bии\b|нейросет|искусствен|автоответчик", re.IGNORECASE
+)
+_LEADING_HELLO = re.compile(
+    r"^(?:здравствуйте|добрый (?:день|вечер)|доброе утро|привет)[!.,\s]*", re.IGNORECASE
+)
+
+
+def _strip_self_intro(text: str) -> str:
+    """Убирает «Я ИИ-секретарь…», «Вы говорите с виртуальным ассистентом…» из реплики."""
+    kept: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
+        match = _SELF_INTRO.search(sentence)
+        if not match:
+            kept.append(sentence)
+            continue
+        # «Я ИИ-помощник, подскажите, по какому вопросу?» → «Подскажите, по какому вопросу?»
+        rest = sentence[match.end():]
+        cut = re.search(r"[,—–:]\s*", rest)
+        tail = rest[cut.end():].strip() if cut else ""
+        head = sentence[: match.start()].strip(" ,—–-")
+        if head:
+            kept.append(head if head[-1] in ".!?" else f"{head}.")
+        if len(tail.split()) >= 2:
+            kept.append(tail[0].upper() + tail[1:])
+    return " ".join(s for s in kept if s).strip()
+
+
 def finalize_agent_reply(request: CallRequest, text: str) -> str:
-    """Цензура + предупреждение об ИИ только в первой реплике сессии."""
+    """Цензура + предупреждение об ИИ только в первой реплике + без самопредставлений."""
     text = censor(text or "")
+    if not _ASKS_IF_AI.search(request.user_message or ""):
+        text = _strip_self_intro(_strip_leading_disclosures(text))
+    greeted = any(t.get("role") == "assistant" for t in request.dialog_history or [])
     if _already_disclosed(request):
-        return _strip_leading_disclosures(text) or "Слушаю вас."
+        text = _LEADING_HELLO.sub("", _strip_leading_disclosures(text)).strip()
+        return (text[:1].upper() + text[1:]) if text else "Слушаю вас."
+    if greeted:
+        text = _LEADING_HELLO.sub("", text).strip()
+        text = text[:1].upper() + text[1:]
     return ensure_ai_disclosure(text)
 
 
