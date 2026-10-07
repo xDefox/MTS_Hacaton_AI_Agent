@@ -65,13 +65,21 @@ async def transcribe_audio(
     if audio_format == "lpcm":
         params["sampleRateHertz"] = str(sample_rate_hertz or 16000)
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        response = await client.post(
-            STT_URL,
-            params=params,
-            content=audio,
-            headers=_auth_headers(),
-        )
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(
+                STT_URL,
+                params=params,
+                content=audio,
+                headers=_auth_headers(),
+            )
+    except httpx.ConnectError as exc:
+        raise SpeechKitError(
+            "Нет доступа к Yandex SpeechKit (stt.api.cloud.yandex.net). "
+            "Проверь интернет/VPN/firewall — без внешней сети Yandex не работает."
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise SpeechKitError(f"SpeechKit STT network error: {exc}") from exc
 
     if response.status_code >= 400:
         logger.error("SpeechKit STT error %s: %s", response.status_code, response.text)
@@ -98,12 +106,20 @@ async def synthesize_ogg(text: str, *, voice: str = "alena", lang: str = "ru-RU"
         "folderId": settings.yc_folder_id,
         "format": "oggopus",
     }
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        response = await client.post(
-            TTS_URL,
-            data=data,
-            headers=_auth_headers(),
-        )
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(
+                TTS_URL,
+                data=data,
+                headers=_auth_headers(),
+            )
+    except httpx.ConnectError as exc:
+        raise SpeechKitError(
+            "Нет доступа к Yandex SpeechKit (tts.api.cloud.yandex.net). "
+            "Проверь интернет/VPN/firewall."
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise SpeechKitError(f"SpeechKit TTS network error: {exc}") from exc
 
     if response.status_code >= 400:
         logger.error("SpeechKit TTS error %s: %s", response.status_code, response.text)

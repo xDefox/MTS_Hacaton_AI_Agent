@@ -37,6 +37,8 @@ async def transcribe_bytes(
             )
         except SpeechKitError as exc:
             raise SpeechError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 — сеть/прокси
+            raise SpeechError(f"Yandex STT unavailable: {exc}") from exc
         return text, "yandex-speechkit"
 
     from backend.services.local_stt import LocalSTTError, transcribe_audio_local
@@ -65,9 +67,9 @@ async def synthesize_agent_audio(text: str) -> tuple[bytes, str, str]:
             audio = await synthesize_ogg(
                 text, voice=settings.tts_voice, lang=settings.tts_lang
             )
-        except SpeechKitError as exc:
-            raise SpeechError(str(exc)) from exc
-        return audio, "ogg", "yandex-speechkit"
+            return audio, "ogg", "yandex-speechkit"
+        except Exception as exc:  # noqa: BLE001 — SpeechKit недоступен → локальный голос
+            logger.warning("SpeechKit TTS failed, fallback to local: %s", exc)
 
     from backend.services.local_tts import LocalTTSError, synthesize_wav_local
 

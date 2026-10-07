@@ -16,11 +16,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # local = Ollama+Whisper+local TTS (default for MTS contour demo)
-    # yandex = external YandexGPT/SpeechKit (legacy / optional)
-    llm_provider: str = "local"
-    stt_provider: str = "local"
-    tts_provider: str = "local"
+    # Только внешний Yandex (без Ollama/локальной LLM)
+    llm_provider: str = "yandex"
+    stt_provider: str = "yandex"
+    tts_provider: str = "yandex"
 
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:3b"
@@ -28,19 +27,28 @@ class Settings(BaseSettings):
     ollama_timeout_sec: float = 45.0
     # Полный LLM (нет правила в тексте)
     ollama_num_ctx: int = 1024
-    ollama_num_predict: int = 100
+    # 100 обрезало JSON (Unterminated string) — запас на полный объект
+    ollama_num_predict: int = 180
     ollama_keep_alive: str = "2h"
     # Lite: правило сработало → всё равно LLM (жюри), но крошечный промпт
     ollama_lite_on_rule: bool = True
     ollama_lite_num_ctx: int = 512
-    ollama_lite_num_predict: int = 64
+    ollama_lite_num_predict: int = 96
     # True = вообще без Ollama при правиле (НЕ для демо жюри «строго LLM»)
     ollama_rules_fast_path: bool = False
 
-    whisper_model_size: str = "tiny"
+    # base заметно точнее tiny на шуме (поезд/улица); tiny — только если нужна макс. скорость
+    whisper_model_size: str = "base"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
     whisper_cpu_threads: int = 8
+    whisper_beam_size: int = 3
+    whisper_vad_filter: bool = True
+    whisper_normalize: bool = True
+    whisper_initial_prompt: str = (
+        "Звонок на русском языке секретарю компании. "
+        "Разборчивая речь абонента, возможны помехи линии."
+    )
     ollama_num_thread: int = 8
 
     tts_timeout_sec: float = 20.0
@@ -50,7 +58,8 @@ class Settings(BaseSettings):
     yc_api_key: str = ""
 
     yandex_model: str = "yandexgpt"
-    yandex_model_version: str = "rc"
+    # URI: gpt://{folder}/yandexgpt/latest (rc в SDK ≠ всегда в REST)
+    yandex_model_version: str = "latest"
     yandex_temperature: float = 0.3
     yandex_max_retries: int = 1
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
 from sqlalchemy import select
 
 from backend.config import Settings, get_settings
@@ -16,6 +15,11 @@ from backend.services.training_examples import load_examples
 
 
 async def check_ollama(settings: Settings) -> dict[str, Any]:
+    """Оставлено для совместимости; при llm=yandex не требуется."""
+    if (settings.llm_provider or "").strip().lower() != "local":
+        return {"ok": True, "skipped": True, "detail": "llm_provider!=local"}
+    import httpx
+
     url = f"{settings.ollama_base_url.rstrip('/')}/api/tags"
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
@@ -52,6 +56,12 @@ def build_readiness(settings: Settings | None = None, *, ollama: dict[str, Any] 
     scenarios = load_scenarios()
     examples = load_examples()
     db = check_database()
+    yandex_ok = bool(settings.yc_folder_id and settings.yc_api_key)
+    llm = (settings.llm_provider or "").strip().lower()
+    stt = (settings.stt_provider or "").strip().lower()
+    tts = (settings.tts_provider or "").strip().lower()
+    yandex_stack = llm == "yandex" and stt == "yandex" and tts == "yandex"
+
     checks = {
         "database": db,
         "routing_rules": {"ok": len(rules) >= 1, "count": len(rules)},
@@ -59,39 +69,39 @@ def build_readiness(settings: Settings | None = None, *, ollama: dict[str, Any] 
         "training_examples": {"ok": len(examples) >= 1, "count": len(examples)},
         "providers": {
             "ok": True,
-            "llm": settings.llm_provider,
-            "stt": settings.stt_provider,
-            "tts": settings.tts_provider,
+            "llm": llm,
+            "stt": stt,
+            "tts": tts,
         },
-        "local_defaults": {
-            "ok": (
-                (settings.llm_provider or "").lower() == "local"
-                and (settings.stt_provider or "").lower() == "local"
-                and (settings.tts_provider or "").lower() == "local"
-            ),
-            "detail": "На демо жюри — local LLM/STT/TTS",
+        "yandex_credentials": {
+            "ok": yandex_ok if llm == "yandex" or stt == "yandex" or tts == "yandex" else True,
+            "detail": "YC_FOLDER_ID + YC_API_KEY" if yandex_ok else "missing secrets",
+        },
+        "yandex_stack": {
+            "ok": yandex_stack,
+            "detail": "LLM/STT/TTS = yandex",
         },
     }
-    if ollama is not None:
+    if ollama is not None and llm == "local":
         checks["ollama"] = ollama
 
-    required = ["database", "routing_rules", "scenarios", "providers", "local_defaults"]
+    required = ["database", "routing_rules", "scenarios", "providers", "yandex_credentials"]
     ready_core = all(checks[k].get("ok") for k in required)
-    ollama_ok = bool((ollama or {}).get("ok") and (ollama or {}).get("has_model"))
+    demo_ready = ready_core and yandex_stack and yandex_ok
     return {
         "ready": ready_core,
-        "demo_ready": ready_core and ollama_ok,
+        "demo_ready": demo_ready,
         "track": 1,
         "message": (
-            "Ядро готово. Для полного демо дождитесь ollama pull qwen2.5:3b"
-            if ready_core and not ollama_ok
-            else ("Готово к демо" if ready_core and ollama_ok else "Есть незакрытые пункты чеклиста")
+            "Готово к демо (YandexGPT + SpeechKit)"
+            if demo_ready
+            else ("Ядро готово, проверьте Yandex-стек" if ready_core else "Есть незакрытые пункты чеклиста")
         ),
         "checks": checks,
         "setup_hint": [
             "1. pip install -r requirements.txt",
-            "2. ollama pull qwen2.5:3b && ollama serve",
-            "3. uvicorn backend.main:app --reload --port 8000",
+            "2. .env: YC_FOLDER_ID, YC_API_KEY, LLM/STT/TTS=yandex",
+            "3. powershell -File scripts\\start_backend.ps1",
             "4. GET /ready → demo_ready=true",
         ],
     }

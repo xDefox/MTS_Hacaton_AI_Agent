@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +24,7 @@ class TrainingExample:
     note: str = ""
     enabled: bool = True
     is_critical: bool | None = None
+    sample_reply: str = ""
 
 
 DEFAULT_EXAMPLES: list[TrainingExample] = [
@@ -34,6 +35,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="callback_recommended",
         note="Коммерческий лид с дедлайном",
         is_critical=True,
+        sample_reply="Здравствуйте! Зафиксировала интерес к пилоту API. Как удобнее связаться и кто контакт с вашей стороны?",
     ),
     TrainingExample(
         id="ex-partner",
@@ -45,6 +47,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="callback_recommended",
         note="Партнёрский лид — не transfer_to_human без явной просьбы",
         is_critical=True,
+        sample_reply="Здравствуйте! Приняла запрос по партнёрству и КП до среды. Передам Ивану — удобный телефон для ответа?",
     ),
     TrainingExample(
         id="ex-complex",
@@ -53,6 +56,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="offer_telegram_chat",
         note="Сложный вопрос -> чат",
         is_critical=True,
+        sample_reply="Здравствуйте! Тема объёмная — удобнее разобрать SLA и 1С в рабочем чате. Могу зафиксировать контакт?",
     ),
     TrainingExample(
         id="ex-spam",
@@ -61,6 +65,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="continue_dialog",
         note="Холодные продажи",
         is_critical=False,
+        sample_reply="Спасибо за предложение. Сейчас такие услуги не рассматриваем. Хорошего дня!",
     ),
     TrainingExample(
         id="ex-offtop",
@@ -69,6 +74,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="continue_dialog",
         note="Оффтоп",
         is_critical=False,
+        sample_reply="С удовольствием в другой раз — я по рабочим вопросам Ивана. Чем могу помочь по делу?",
     ),
     TrainingExample(
         id="ex-human",
@@ -77,6 +83,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="transfer_to_human",
         note="Горячая линия",
         is_critical=True,
+        sample_reply="Конечно, организую соединение со специалистом. Останьтесь, пожалуйста, на линии.",
     ),
     TrainingExample(
         id="ex-faq",
@@ -85,6 +92,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="continue_dialog",
         note="FAQ",
         is_critical=False,
+        sample_reply="Мы на связи в рабочие дни с 10 до 19. Могу передать вопрос Ивану, если нужно подробнее.",
     ),
     TrainingExample(
         id="ex-noise",
@@ -93,6 +101,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="continue_dialog",
         note="Шум линии",
         is_critical=False,
+        sample_reply="Да, слышу вас. Подскажите, пожалуйста, цель звонка.",
     ),
     TrainingExample(
         id="ex-wrong",
@@ -101,6 +110,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="continue_dialog",
         note="Ошибочный номер",
         is_critical=False,
+        sample_reply="Ничего страшного. Всего доброго!",
     ),
     TrainingExample(
         id="ex-complaint",
@@ -109,6 +119,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="callback_recommended",
         note="Жалоба",
         is_critical=True,
+        sample_reply="Понимаю, как это важно. Зафиксирую обращение — Иван свяжется. Оставьте, пожалуйста, контакт.",
     ),
     TrainingExample(
         id="ex-support",
@@ -117,6 +128,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="continue_dialog",
         note="Поддержка",
         is_critical=False,
+        sample_reply="Поняла. Уточните, пожалуйста, текст ошибки и логин — передам в поддержку или Ивану.",
     ),
     TrainingExample(
         id="ex-payment",
@@ -125,6 +137,7 @@ DEFAULT_EXAMPLES: list[TrainingExample] = [
         expected_action="transfer_to_human",
         note="Срочная оплата + человек",
         is_critical=True,
+        sample_reply="Слышу, срочный вопрос по оплате. Соединяю с Иваном — останьтесь на линии.",
     ),
 ]
 
@@ -143,7 +156,10 @@ def load_examples_raw() -> list[TrainingExample]:
     for item in raw:
         item = dict(item)
         item.setdefault("is_critical", None)
-        out.append(TrainingExample(**item))
+        item.setdefault("sample_reply", "")
+        # игнор лишних ключей из старых файлов
+        allowed = {f.name for f in fields(TrainingExample)}
+        out.append(TrainingExample(**{k: v for k, v in item.items() if k in allowed}))
     return out
 
 
@@ -169,6 +185,7 @@ def sync_default_examples() -> None:
                     note=ex.note,
                     enabled=custom.enabled,
                     is_critical=ex.is_critical,
+                    sample_reply=ex.sample_reply or custom.sample_reply,
                 )
             )
         else:
@@ -207,6 +224,7 @@ def upsert_example(data: dict[str, Any]) -> dict[str, Any]:
         note=str(data.get("note") or ""),
         enabled=bool(data.get("enabled", True)),
         is_critical=data.get("is_critical"),
+        sample_reply=str(data.get("sample_reply") or ""),
     )
     for i, existing in enumerate(items):
         if existing.id == eid:
@@ -241,10 +259,12 @@ def examples_prompt_block(limit: int = 16) -> str:
         crit = ""
         if ex.is_critical is not None:
             crit = f", is_critical={str(ex.is_critical).lower()}"
+        reply = f' | reply: «{ex.sample_reply}»' if ex.sample_reply else ""
         lines.append(
             f'- «{ex.user_message}» → intent={ex.expected_intent}, '
             f"action={ex.expected_action}{crit}"
             + (f" ({ex.note})" if ex.note else "")
+            + reply
         )
         if len(lines) >= limit:
             break
