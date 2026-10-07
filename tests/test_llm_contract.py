@@ -92,6 +92,22 @@ def test_parse_and_extract() -> int:
     else:
         print("OK   empty-field coalesce")
 
+    # truncated JSON (num_predict cut mid-string)
+    truncated = (
+        '{"agent_response":"Здравствуйте!","is_critical":false,"priority":"normal",'
+        '"intent":"other","action_required":"continue_dialog","summary":"Звонок без '
+    )
+    try:
+        parsed_tr = _parse_output(truncated)
+        if not parsed_tr.agent_response:
+            print("FAIL truncated repair empty")
+            failed += 1
+        else:
+            print("OK   truncated JSON repair")
+    except Exception as exc:  # noqa: BLE001
+        print("FAIL truncated repair", exc)
+        failed += 1
+
     # English prompt leakage → replace with Russian
     en_junk = _ok_json(
         summary="2-3 sentences for Ivan",
@@ -300,15 +316,28 @@ def test_fast_path_and_compact() -> int:
     failed = 0
     print("\n=== fast-path + compact prompt ===")
     reset_rules_to_defaults()
+    from backend.services.training_examples import reset_examples_to_defaults, sync_default_examples
+
+    reset_examples_to_defaults()
+    sync_default_examples()
     compact = build_system_prompt(get_settings(), compact=True)
-    if "sentences for Ivan" in compact or "concrete next step" in compact:
+    low = compact.lower()
+    if "sentences for ivan" in low or "concrete next step" in low:
         print("FAIL compact has english placeholders")
         failed += 1
-    elif "только на русском" not in compact.lower() and "на русском" not in compact.lower():
+    elif "секретар" not in low:
+        print("FAIL compact missing secretary role")
+        failed += 1
+    elif "русск" not in low:
         print("FAIL compact missing russian requirement")
         failed += 1
     else:
         print("OK   compact prompt russian")
+    if "reply:" not in compact:
+        print("FAIL compact missing sample replies")
+        failed += 1
+    else:
+        print("OK   compact sample replies")
 
     async def _run() -> CallResponse:
         settings = get_settings().model_copy(update={"ollama_rules_fast_path": True})

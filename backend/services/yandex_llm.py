@@ -173,11 +173,48 @@ def _default_next_step(action: str, is_critical: bool) -> str:
     return mapping.get(action, "Просмотреть резюме")
 
 
-def _parse_output(raw_text: str) -> AgentLLMOutput:
+def _repair_truncated_json(text: str) -> str:
+    """qwen2.5:3b часто обрывает JSON на num_predict — закрываем строку и скобки."""
+    text = (text or "").strip()
+    if not text:
+        return text
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+    if in_string:
+        text += '"'
+    # убрать висячую запятую перед закрытием
+    text = re.sub(r",\s*$", "", text)
+    opens = text.count("{") - text.count("}")
+    if opens > 0:
+        text += "}" * opens
+    return text
+
+
+def _loads_json_lenient(raw_text: str) -> dict[str, Any]:
     cleaned = raw_text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    data = json.loads(cleaned)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        repaired = _repair_truncated_json(cleaned)
+        data = json.loads(repaired)
+    if not isinstance(data, dict):
+        raise ValueError("LLM JSON root is not an object")
+    return data
+
+
+def _parse_output(raw_text: str) -> AgentLLMOutput:
+    data = _loads_json_lenient(raw_text)
     if isinstance(data, dict):
         # Маленькие модели часто отдают "" или копируют английские подсказки
         agent = _nonempty(data.get("agent_response"), "Здравствуйте! Чем могу помочь?")
@@ -202,35 +239,70 @@ def _parse_output(raw_text: str) -> AgentLLMOutput:
     return AgentLLMOutput.model_validate(data)
 
 
+# Внешний HTTP API YandexGPT (без gRPC SDK — на Windows gRPC часто ломается на IPv6).
+YANDEX_COMPLETION_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+
+
 def _run_yandex_sync(messages: list[dict[str, str]], settings: Settings) -> str:
-    try:
-        from yandex_ai_studio_sdk import AIStudio
-    except ImportError as exc:
-        raise YandexLLMError(
-            "Package yandex-ai-studio-sdk is not installed. Run: pip install -r requirements.txt"
-        ) from exc
+    """Прямой REST к Yandex Cloud Foundation Models — как вчерашняя внешняя интеграция."""
+    import httpx
 
     if not settings.yc_folder_id or not settings.yc_api_key:
-        raise YandexLLMError(
-            "YC_FOLDER_ID and YC_API_KEY must be set in .env."
-        )
+        raise YandexLLMError("YC_FOLDER_ID and YC_API_KEY must be set in .env.")
 
-    sdk = AIStudio(folder_id=settings.yc_folder_id, auth=settings.yc_api_key)
-    model = sdk.models.completions(
-        settings.yandex_model,
-        model_version=settings.yandex_model_version,
-    )
-    model = model.configure(
-        temperature=settings.yandex_temperature,
-        response_format=AgentLLMOutput,
-    )
+    model_name = (settings.yandex_model or "yandexgpt").strip()
+    version = (settings.yandex_model_version or "latest").strip()
+    # rc/latest → в URI обычно latest; rc оставляем если явно задан
+    ver = version if version not in {"", "rc"} else "latest"
+    model_uri = f"gpt://{settings.yc_folder_id}/{model_name}/{ver}"
+
+    # SDK ждал structured JSON через response_format — в REST просим явно в последнем user.
+    payload = {
+        "modelUri": model_uri,
+        "completionOptions": {
+            "stream": False,
+            "temperature": float(settings.yandex_temperature),
+            "maxTokens": 800,
+        },
+        "messages": messages,
+    }
+    headers = {
+        "Authorization": f"Api-Key {settings.yc_api_key}",
+        "Content-Type": "application/json",
+        "x-folder-id": settings.yc_folder_id,
+    }
 
     started = time.perf_counter()
-    result = model.run(messages)
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(YANDEX_COMPLETION_URL, json=payload, headers=headers)
+    except httpx.ConnectError as exc:
+        raise YandexLLMError(
+            "Нет доступа к llm.api.cloud.yandex.net (внешний YandexGPT). "
+            "Включи VPN / другой интернет — с этой сети Yandex Cloud недоступен."
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise YandexLLMError(f"YandexGPT HTTP error: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise YandexLLMError(
+            f"YandexGPT HTTP {response.status_code}: {response.text[:400]}"
+        )
+
+    data = response.json()
+    try:
+        text = data["result"]["alternatives"][0]["message"]["text"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise YandexLLMError(f"Unexpected YandexGPT response: {data!r}"[:400]) from exc
+
     latency_ms = int((time.perf_counter() - started) * 1000)
-    text = _extract_text(result)
-    logger.info("YandexGPT ok latency_ms=%s chars=%s", latency_ms, len(text))
-    return text
+    logger.info(
+        "YandexGPT HTTP ok latency_ms=%s chars=%s model=%s",
+        latency_ms,
+        len(text or ""),
+        model_uri,
+    )
+    return text or ""
 
 
 def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
@@ -304,48 +376,23 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
 
 
 def _is_non_business_junk(text: str) -> bool:
-    """Оффтоп / холодные продажи — не к специалисту (если нет явной просьбы человека)."""
-    t = text.lower()
-    if any(
-        p in t
-        for p in (
-            "соедините",
-            "с менеджером",
-            "с человеком",
-            "с иваном",
-            "оператор",
-            "переведите на",
-        )
-    ):
-        return False
-    junk_markers = (
-        "стишок",
-        "стих",
-        "анекдот",
-        "поболтаем",
-        "поболтать",
-        "скучно",
-        "расскажи сказк",
-        "расскажи что-нибудь",
-        "спой",
-        "угадай",
-        "развлеки",
-        "продаём",
-        "продаем",
-        "предлагаем услуги",
-        "хотим предложить",
-        "скидк",
-        "директ",
-        "seo",
-        "продвижен",
-        "кредитн",
-        "розыгрыш",
-        "выигрыш",
-        "контекстн",
-        "игнорируй",
-        "system prompt",
+    """Оффтоп / холодные продажи / наживка «конфетка+менеджер» — не к специалисту."""
+    from backend.services.routing_rules import (
+        NON_BUSINESS_BAIT_MARKERS,
+        has_business_context,
+        has_human_request,
+        is_human_bait_without_business,
     )
-    return any(m in t for m in junk_markers)
+
+    if is_human_bait_without_business(text):
+        return True
+    t = (text or "").lower()
+    # Чистая просьба человека без мусора — не junk
+    if has_human_request(t) and has_business_context(t):
+        return False
+    if has_human_request(t) and not any(m in t for m in NON_BUSINESS_BAIT_MARKERS):
+        return False
+    return any(m in t for m in NON_BUSINESS_BAIT_MARKERS)
 
 
 def _guard_non_business_escalation(request: CallRequest, response: CallResponse) -> CallResponse:
@@ -367,7 +414,19 @@ def _guard_non_business_escalation(request: CallRequest, response: CallResponse)
     text_lower = request.user_message.lower()
     intent = (
         Intent.spam
-        if any(w in text_lower for w in ("прода", "предлага", "скидк", "реклам", "директ"))
+        if any(
+            w in text_lower
+            for w in (
+                "прода",
+                "предлага",
+                "скидк",
+                "реклам",
+                "директ",
+                "шины",
+                "шину",
+                "автошин",
+            )
+        )
         else Intent.other
     )
     return response.model_copy(

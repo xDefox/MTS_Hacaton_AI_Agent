@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 from uuid import uuid4
 
 from backend.config import ROOT_DIR
+
+logger = logging.getLogger(__name__)
 
 RULES_PATH = ROOT_DIR / "data" / "routing_rules.json"
 
@@ -24,13 +27,128 @@ class RoutingRule:
     enabled: bool = True
 
 
+# Деловой контекст: «соедините с менеджером» честно; без него + спам/оффтоп = наживка.
+BUSINESS_CONTEXT_MARKERS: tuple[str, ...] = (
+    "договор",
+    "оплат",
+    "счёт",
+    "счет",
+    "пилот",
+    "api",
+    "интеграц",
+    "sla",
+    "nda",
+    "жалоб",
+    "претенз",
+    "инцидент",
+    "партнёр",
+    "партнер",
+    "кабинет",
+    "поддерж",
+    "коммерческ",
+    " кп ",
+    "кп до",
+    "счёт",
+    "встреч",
+    "созвон",
+    "дедлайн",
+    "счет-фактур",
+    "акт сверк",
+    "по проекту",
+    "по сделк",
+)
+
+NON_BUSINESS_BAIT_MARKERS: tuple[str, ...] = (
+    "стишок",
+    "стих",
+    "анекдот",
+    "поболтаем",
+    "поболтать",
+    "скучно",
+    "сказк",
+    "спой",
+    "угадай",
+    "развлеки",
+    "конфет",
+    "мороже",
+    "игрушк",
+    "котён",
+    "котен",
+    "щенк",
+    "мем",
+    "пранк",
+    "шутк",
+    "ерунд",
+    "чушь",
+    "глупост",
+    "продаём",
+    "продаем",
+    "продаю",
+    "продаёт",
+    "продает",
+    "шины",
+    "шину",
+    "шинами",
+    "автошин",
+    "резину",
+    "резины",
+    "предлагаем услуги",
+    "хотим предложить",
+    "скидк",
+    "директ",
+    "seo",
+    "продвижен",
+    "кредитн",
+    "розыгрыш",
+    "выигрыш",
+    "контекстн",
+    "игнорируй",
+    "system prompt",
+)
+
+HUMAN_REQUEST_MARKERS: tuple[str, ...] = (
+    "соедините",
+    "с менеджером",
+    "с человеком",
+    "с иваном",
+    "оператор",
+    "переведите на",
+    "переключите",
+    "живой человек",
+)
+
+
+def has_business_context(text: str) -> bool:
+    t = f" {(text or '').lower()} "
+    return any(m in t for m in BUSINESS_CONTEXT_MARKERS)
+
+
+def has_human_request(text: str) -> bool:
+    t = (text or "").lower()
+    return any(m in t for m in HUMAN_REQUEST_MARKERS)
+
+
+def is_human_bait_without_business(text: str) -> bool:
+    """«Соедините…» + спам/оффтоп без дела → не эскалировать.
+
+    Конфетка/шины/мороженое/Директ и т.п. — наживка; чистая просьба
+    человека или просьба + договор/оплата — горячая линия.
+    """
+    t = (text or "").lower()
+    if not has_human_request(t):
+        return False
+    if has_business_context(t):
+        return False
+    return any(m in t for m in NON_BUSINESS_BAIT_MARKERS)
+
+
 # Порядок важен: первое совпадение побеждает.
-# Явная просьба человека — выше спама/оффтопа (даже в смешанных фразах).
+# Горячая линия — только с деловым контекстом; иначе смотрим спам/оффтоп.
 DEFAULT_RULES: list[RoutingRule] = [
     RoutingRule(
         id="rule-human",
         name="Горячая линия",
-        description="Явная просьба человека → transfer_to_human",
+        description="Просьба человека + деловой контекст → transfer_to_human",
         keywords=[
             "соедините с менеджером",
             "соедините с иваном",
@@ -38,6 +156,7 @@ DEFAULT_RULES: list[RoutingRule] = [
             "оператор",
             "живой человек",
             "переведите на",
+            "переключите",
         ],
         is_critical=True,
         intent="escalation",
@@ -93,6 +212,13 @@ DEFAULT_RULES: list[RoutingRule] = [
             "хотим предложить",
             "продаём",
             "продаем",
+            "продаю",
+            "шины",
+            "шину",
+            "шинами",
+            "автошин",
+            "резину",
+            "резины",
             "seo",
             "кредитн",
             "розыгрыш",
@@ -119,6 +245,12 @@ DEFAULT_RULES: list[RoutingRule] = [
             "угадай",
             "развлеки",
             "расскажи что-нибудь",
+            "конфет",
+            "мороже",
+            "игрушк",
+            "пранк",
+            "мем",
+            "ерунд",
         ],
         is_critical=False,
         intent="other",
@@ -287,9 +419,29 @@ def delete_rule(rule_id: str) -> bool:
 
 def match_rule(user_message: str) -> RoutingRule | None:
     text = (user_message or "").lower()
+    bait = is_human_bait_without_business(user_message)
+    skipped_human = False
     for rule in load_rules():
         if not rule.enabled:
             continue
-        if any(kw in text for kw in rule.keywords):
-            return rule
+        if not any(kw in text for kw in rule.keywords):
+            continue
+        # Наживка «конфетка/шины/мороженое + соедините» — не rule-human
+        if rule.id == "rule-human" and bait:
+            skipped_human = True
+            logger.info("Skip rule-human: no business context (bait) msg=%r", text[:120])
+            continue
+        return rule
+    # Посторонняя тема + «соедините» без дела, и нет spam/offtopic-правила
+    if bait and skipped_human:
+        return RoutingRule(
+            id="rule-human-bait",
+            name="Наживка без делового контекста",
+            description="Просьба человека без дела — не будить Ивана",
+            keywords=[],
+            is_critical=False,
+            intent="other",
+            action_required="continue_dialog",
+            enabled=True,
+        )
     return None

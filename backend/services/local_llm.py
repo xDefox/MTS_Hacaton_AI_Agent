@@ -79,38 +79,33 @@ def _russian_summary(request: CallRequest, rule: RoutingRule | None = None) -> s
 
 
 def _voice_line_for_rule(rule: RoutingRule) -> str:
+    """Эталонные реплики секретаря (коротко, по-человечески)."""
     action = rule.action_required or "continue_dialog"
-    if action == "transfer_to_human":
+    rid = rule.id or ""
+    if action == "transfer_to_human" or "human" in rid:
+        return "Конечно, организую соединение. Останьтесь, пожалуйста, на линии."
+    if action == "callback_recommended" or "partner" in rid or "complaint" in rid:
         return (
-            "Здравствуйте! Понял, сейчас организую соединение со специалистом. "
-            "Останьтесь, пожалуйста, на линии."
+            "Зафиксировала ваш запрос — Иван свяжется в ближайшее время. "
+            "Подскажите удобный контакт?"
         )
-    if action == "callback_recommended":
+    if action == "offer_telegram_chat" or "complex" in rid or "telegram" in rid:
         return (
-            "Здравствуйте! Зафиксировал ваш запрос. "
-            "Иван или менеджер перезвонит вам в ближайшее время. Уточните удобный контакт?"
+            "Тема объёмная — удобнее продолжить в рабочем чате. "
+            "Могу зафиксировать контакт для связи?"
         )
-    if action == "offer_telegram_chat":
+    if rule.intent == "spam" or "spam" in rid:
+        return "Спасибо за предложение. Сейчас такие услуги не рассматриваем. Хорошего дня!"
+    if rule.intent == "faq" or "faq" in rid:
         return (
-            "Здравствуйте! Вопрос объёмный — удобнее продолжить в рабочем чате, "
-            "там разберём детали. Могу зафиксировать контакт для связи."
+            "Мы на связи в рабочие дни с 10 до 19. "
+            "Если нужно подробнее — оставьте контакт, передам Ивану."
         )
-    if rule.intent == "spam":
-        return (
-            "Здравствуйте! Спасибо за предложение. Сейчас мы не рассматриваем такие услуги. "
-            "Хорошего дня!"
-        )
-    if rule.intent == "faq":
-        return (
-            "Здравствуйте! Кратко подскажу по типовому вопросу. "
-            "Если нужна уточнённая информация — оставьте контакт, передадим Ивану."
-        )
-    if rule.intent == "wrong_number":
-        return "Здравствуйте! Похоже, вы ошиблись номером. Всего доброго!"
-    return (
-        "Здравствуйте! Я помощник Ивана. Расскажите, пожалуйста, цель звонка "
-        "и название компании — так смогу помочь точнее."
-    )
+    if rule.intent == "wrong_number" or "wrong" in rid:
+        return "Ничего страшного, похоже ошиблись номером. Всего доброго!"
+    if "noise" in rid:
+        return "Да, слышу вас. Подскажите, пожалуйста, цель звонка."
+    return "Здравствуйте! Подскажите, пожалуйста, компанию и цель звонка — так смогу помочь точнее."
 
 
 def _response_from_rule(
@@ -158,17 +153,17 @@ def _polish_fields(
 
 
 def _lite_system_prompt(rule: RoutingRule) -> str:
-    """Ультракороткий промпт: LLM пишет только реплику, маршрут задаёт правило (ТЗ: контроль)."""
+    """Ультракороткий промпт: LLM пишет реплику секретаря, маршрут задаёт правило."""
     hint = _voice_line_for_rule(rule)
     return (
-        "Ты ИИ-секретарь Ивана. Только русский. Один JSON без markdown.\n"
-        f"Контекст правила: «{rule.name}» → action={rule.action_required}, "
+        "Ты опытный секретарь Ивана: вежливо, по делу, как живой человек. "
+        "Только русский. Один JSON без markdown.\n"
+        f"Ситуация: «{rule.name}» → action={rule.action_required}, "
         f"intent={rule.intent}, critical={rule.is_critical}.\n"
-        "Поля: agent_response (1 короткое предложение звонящему), "
-        "summary (1 фраза для Ивана), recommended_next_step (коротко), "
-        "is_critical, priority, intent, action_required, caller_name.\n"
-        f"Ориентир тона: {hint}\n"
-        "В agent_response НЕ пиши предупреждение про ИИ."
+        "agent_response: 1–2 живые фразы звонящему (не шаблон «чем могу помочь» без сути). "
+        "summary: одна фраза для Ивана. recommended_next_step: коротко.\n"
+        f"Ориентир формулировки: «{hint}»\n"
+        "Не пиши предупреждение про ИИ. Не выдумывай факты."
     )
 
 

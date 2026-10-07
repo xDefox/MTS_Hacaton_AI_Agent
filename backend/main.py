@@ -1,4 +1,5 @@
 import logging
+import socket
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,6 +7,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api.routes_call import router as call_router
 from backend.config import get_settings
 from backend.database import init_db
+
+# Windows: gRPC/httpx часто берут IPv6 → connection refused к Yandex Cloud.
+# Предпочитаем IPv4 для внешней интеграции.
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _getaddrinfo_ipv4_first(*args, **kwargs):  # type: ignore[no-untyped-def]
+    res = _orig_getaddrinfo(*args, **kwargs)
+    v4 = [r for r in res if r[0] == socket.AF_INET]
+    return v4 + [r for r in res if r[0] != socket.AF_INET]
+
+
+socket.getaddrinfo = _getaddrinfo_ipv4_first  # type: ignore[assignment]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,7 +30,7 @@ app = FastAPI(
     title="MTS AI Agent API",
     description=(
         "Трек 1: ИИ-агент входящих звонков для Ивана. "
-        "Локальный контур: Ollama LLM + Whisper STT + local TTS + SQLite."
+        "YandexGPT + SpeechKit STT/TTS + SQLite."
     ),
     version="1.8.0",
 )
@@ -39,10 +53,23 @@ async def on_startup() -> None:
     if settings.warmup_on_startup:
         from backend.services.warmup import warmup_demo_stack
 
-        # Блокируем «ready» до прогрева — иначе Swagger ловит холодный Whisper/Ollama.
-        status = await warmup_demo_stack(settings)
-        app.state.warmup_status = status
-        logging.getLogger(__name__).info("Startup warmup: %s", status)
+        # Не блокируем bind порта: HF скачивание Whisper может идти минуты.
+        # /process_call (текст) и YandexGPT работают сразу; голос — после прогрева.
+        app.state.warmup_status = {"status": "running"}
+
+        async def _warmup_bg() -> None:
+            log = logging.getLogger(__name__)
+            try:
+                status = await warmup_demo_stack(settings)
+                app.state.warmup_status = status
+                log.info("Startup warmup done: %s", status)
+            except Exception as exc:  # noqa: BLE001
+                app.state.warmup_status = {"status": f"fail:{exc!s}"[:160]}
+                log.warning("Startup warmup failed: %s", exc)
+
+        import asyncio
+
+        asyncio.create_task(_warmup_bg())
     else:
         app.state.warmup_status = {"skipped": "warmup_on_startup=false"}
 

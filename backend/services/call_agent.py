@@ -1,4 +1,4 @@
-"""Unified call agent: local (default) or yandex + routing rules (ТЗ)."""
+"""Call agent: только внешний YandexGPT + routing rules (без Ollama)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,12 @@ import logging
 
 from backend.config import Settings, get_settings
 from backend.schemas import ActionRequired, CallRequest, CallResponse, Intent, Priority
-from backend.services.local_llm import process_call_with_ollama
 from backend.services.routing_rules import match_rule
-from backend.services.yandex_llm import ensure_ai_disclosure, process_call_with_yandex
+from backend.services.yandex_llm import (
+    _guard_non_business_escalation,
+    ensure_ai_disclosure,
+    process_call_with_yandex,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,15 +80,11 @@ async def process_incoming_call(
     settings: Settings | None = None,
 ) -> CallResponse:
     settings = settings or get_settings()
-    provider = (settings.llm_provider or "local").strip().lower()
-    if provider == "yandex":
-        logger.info("LLM provider=yandex")
-        response = await process_call_with_yandex(request, settings)
-    else:
-        logger.info("LLM provider=local model=%s", settings.ollama_model)
-        response = await process_call_with_ollama(request, settings)
+    # Жёстко: только внешний YandexGPT. Ollama/local не используем.
+    logger.info("LLM provider=yandex (external only)")
+    response = await process_call_with_yandex(request, settings)
     response = apply_routing_rules(request, response)
-    # Гарантия disclosure на любом пути (mock / local / yandex / fallback)
+    response = _guard_non_business_escalation(request, response)
     return response.model_copy(
         update={"agent_response": ensure_ai_disclosure(response.agent_response)}
     )
