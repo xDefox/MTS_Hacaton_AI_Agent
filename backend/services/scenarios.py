@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from backend.config import ROOT_DIR
+from backend.services.content_filter import clean_template
 
 SCENARIOS_PATH = ROOT_DIR / "data" / "scenarios.json"
 
@@ -75,9 +76,9 @@ def upsert_scenario(data: dict[str, Any]) -> dict[str, Any]:
     sid = data.get("id") or f"sc-{uuid4().hex[:8]}"
     new = Scenario(
         id=sid,
-        name=str(data.get("name") or "Сценарий"),
+        name=clean_template(str(data.get("name") or "")) or "Сценарий",
         kind=str(data.get("kind") or "custom"),
-        text=str(data.get("text") or ""),
+        text=clean_template(str(data.get("text") or "")),
         enabled=bool(data.get("enabled", True)),
     )
     for i, existing in enumerate(items):
@@ -102,5 +103,5 @@ def delete_scenario(scenario_id: str) -> bool:
 def get_greeting_text() -> str | None:
     for s in load_scenarios():
         if s.enabled and s.kind == "greeting":
-            return s.text
+            return clean_template(s.text)
     return None

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ def main() -> None:
     h = client.get("/health")
     check("health-200", h.status_code == 200, h.text)
     body = h.json()
-    check("health-local-llm", body.get("llm_provider") == "local", str(body))
+    check("health-yandex-llm", body.get("llm_provider") == "yandex", str(body))
     check("health-status", body.get("status") == "ok", str(body))
 
     # routing rules CRUD
@@ -78,7 +79,7 @@ def main() -> None:
     hl = client.post(
         "/api/v1/hotline",
         json={
-            "session_id": "api-hl-1",
+            "session_id": f"api-hl-{uuid.uuid4().hex[:8]}",
             "user_message": "Нужен человек срочно",
             "line_phone": line,
             "client_phone": "+79990001122",

@@ -66,7 +66,7 @@ async def test_multiturn_mock() -> int:
         )
 
     with patch(
-        "backend.services.call_agent.process_call_with_ollama",
+        "backend.services.call_agent.process_call_with_yandex",
         new=AsyncMock(side_effect=fake),
     ):
         resp = await process_incoming_call(
@@ -108,7 +108,7 @@ def test_session_filter_and_validation() -> int:
         },
     )
     with patch(
-        "backend.services.call_agent.process_call_with_ollama",
+        "backend.services.call_agent.process_call_with_yandex",
         new=AsyncMock(
             side_effect=lambda request, settings=None: CallResponse(
                 agent_response=ensure_ai_disclosure("ок"),

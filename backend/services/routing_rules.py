@@ -56,6 +56,35 @@ BUSINESS_CONTEXT_MARKERS: tuple[str, ...] = (
     "акт сверк",
     "по проекту",
     "по сделк",
+    # профиль ИТ-компании Ивана
+    "разработ",
+    "сайт",
+    "приложени",
+    "чат-бот",
+    "телеграм-бот",
+    "crm",
+    "срм",
+    "внедрен",
+    "автоматизац",
+    "проект",
+    "по заказу",
+    "лиценз",
+    "тз ",
+    "техзадан",
+)
+
+# Звонящий представился компанией — дело вероятно, но явный оффтоп важнее
+_WEAK_BUSINESS_MARKERS: tuple[str, ...] = ("из компании", "компания ", "от компании")
+
+# «Директ» как рекламный сервис, но не «директор»
+_DIRECT_AD_MARKERS: tuple[str, ...] = (
+    "директ ",
+    "директ,",
+    "директ.",
+    "директе",
+    "директу",
+    "директа",
+    "директом",
 )
 
 NON_BUSINESS_BAIT_MARKERS: tuple[str, ...] = (
@@ -75,7 +104,6 @@ NON_BUSINESS_BAIT_MARKERS: tuple[str, ...] = (
     "котён",
     "котен",
     "щенк",
-    "мем",
     "пранк",
     "шутк",
     "ерунд",
@@ -95,7 +123,7 @@ NON_BUSINESS_BAIT_MARKERS: tuple[str, ...] = (
     "предлагаем услуги",
     "хотим предложить",
     "скидк",
-    "директ",
+    *_DIRECT_AD_MARKERS,
     "seo",
     "продвижен",
     "кредитн",
@@ -104,42 +132,104 @@ NON_BUSINESS_BAIT_MARKERS: tuple[str, ...] = (
     "контекстн",
     "игнорируй",
     "system prompt",
+    # чужие товары и бытовые вопросы — не к ИТ-компании
+    "бензин",
+    "топлив",
+    "солярк",
+    "дизел",
+    "продукты",
+    "пицц",
+    "такси",
+    "погода",
+    "погоду",
+    "погоды",
+    "погоде",
 )
 
 HUMAN_REQUEST_MARKERS: tuple[str, ...] = (
     "соедините",
+    "свяжите",
+    "связать с",
+    "позовите",
+    "пригласите к телефону",
+    "дайте менеджера",
     "с менеджером",
     "с человеком",
     "с иваном",
+    "с руководител",
+    "с директором",
+    "с начальник",
     "оператор",
     "переведите на",
     "переключите",
     "живой человек",
 )
 
+# Слова, которые не несут темы звонка: вежливость, местоимения, сама просьба.
+_NON_TOPIC_WORDS: frozenset[str] = frozenset(
+    {
+        "здравствуйте", "здравствуй", "привет", "добрый", "день", "вечер", "утро",
+        "алло", "пожалуйста", "спасибо", "срочно", "быстрее", "скорее", "сейчас",
+        "потом", "можно", "можете", "могли", "нужно", "нужен", "нужна", "надо",
+        "хочу", "хотим", "хотел", "хотела", "хотели", "прошу", "просим", "лучше",
+        "просто", "вот", "это", "мне", "нам", "нас", "вас", "вам", "меня", "мой",
+        "наш", "все", "ещё", "еще", "тогда", "какой", "кого", "кем",
+        "менеджер", "менеджера", "менеджером", "человек", "человеком", "человека",
+        "иван", "ивана", "иваном", "оператор", "оператора", "оператором",
+        "сотрудник", "сотрудником", "специалист", "специалистом", "руководитель",
+        "руководителем", "директор", "директором", "начальник", "начальником",
+        "живой", "живым", "соедините", "свяжите", "связать", "позовите",
+        "переведите", "переключите", "пригласите", "дайте", "телефону",
+    }
+)
+
+HumanRequestKind = str  # none | business | pure | bait | unclear
+
+
+def _padded(text: str) -> str:
+    return f" {(text or '').lower()} "
+
 
 def has_business_context(text: str) -> bool:
-    t = f" {(text or '').lower()} "
+    t = _padded(text)
     return any(m in t for m in BUSINESS_CONTEXT_MARKERS)
 
 
 def has_human_request(text: str) -> bool:
-    t = (text or "").lower()
+    t = _padded(text)
     return any(m in t for m in HUMAN_REQUEST_MARKERS)
 
 
-def is_human_bait_without_business(text: str) -> bool:
-    """«Соедините…» + спам/оффтоп без дела → не эскалировать.
+def _topic_words(text: str) -> list[str]:
+    words = "".join(ch if ch.isalnum() else " " for ch in (text or "").lower()).split()
+    return [w for w in words if len(w) > 2 and w not in _NON_TOPIC_WORDS]
 
-    Конфетка/шины/мороженое/Директ и т.п. — наживка; чистая просьба
-    человека или просьба + договор/оплата — горячая линия.
+
+def classify_human_request(text: str) -> HumanRequestKind:
+    """Просьба соединить с человеком: насколько она по делу.
+
+    business — есть дело компании (договор, пилот, разработка) → перевод;
+    pure     — только просьба соединить, без темы → перевод;
+    bait     — спам / оффтоп / чужой товар → не переводить;
+    unclear  — есть посторонняя тема без дела → сначала уточнить цель.
     """
-    t = (text or "").lower()
-    if not has_human_request(t):
-        return False
-    if has_business_context(t):
-        return False
-    return any(m in t for m in NON_BUSINESS_BAIT_MARKERS)
+    if not has_human_request(text):
+        return "none"
+    if has_business_context(text):
+        return "business"
+    t = _padded(text)
+    if any(m in t for m in NON_BUSINESS_BAIT_MARKERS):
+        return "bait"
+    if any(m in t for m in _WEAK_BUSINESS_MARKERS):
+        return "business"
+    if len(_topic_words(text)) >= 3:
+        return "unclear"
+    return "pure"
+
+
+def is_human_bait_without_business(text: str) -> bool:
+    """Просьба человека, которую не нужно сразу переводить (bait или unclear)."""
+    return classify_human_request(text) in {"bait", "unclear"}
 
 
 # Порядок важен: первое совпадение побеждает.
@@ -152,6 +242,12 @@ DEFAULT_RULES: list[RoutingRule] = [
         keywords=[
             "соедините с менеджером",
             "соедините с иваном",
+            "свяжите",
+            "связать с",
+            "позовите",
+            "дайте менеджера",
+            "с руководител",
+            "с директором",
             "с человеком",
             "оператор",
             "живой человек",
@@ -205,7 +301,7 @@ DEFAULT_RULES: list[RoutingRule] = [
         name="Холодные продажи / реклама",
         description="Не эскалировать спам и чужие услуги",
         keywords=[
-            "директ",
+            *_DIRECT_AD_MARKERS,
             "скидк",
             "продвижен",
             "предлагаем услуги",
@@ -249,8 +345,11 @@ DEFAULT_RULES: list[RoutingRule] = [
             "мороже",
             "игрушк",
             "пранк",
-            "мем",
             "ерунд",
+            "бензин",
+            "топлив",
+            "пицц",
+            "такси",
         ],
         is_critical=False,
         intent="other",
@@ -418,8 +517,9 @@ def delete_rule(rule_id: str) -> bool:
 
 
 def match_rule(user_message: str) -> RoutingRule | None:
-    text = (user_message or "").lower()
-    bait = is_human_bait_without_business(user_message)
+    text = _padded(user_message)
+    kind = classify_human_request(user_message)
+    bait = kind in {"bait", "unclear"}
     skipped_human = False
     for rule in load_rules():
         if not rule.enabled:
@@ -432,6 +532,17 @@ def match_rule(user_message: str) -> RoutingRule | None:
             logger.info("Skip rule-human: no business context (bait) msg=%r", text[:120])
             continue
         return rule
+    if kind == "unclear" and skipped_human:
+        return RoutingRule(
+            id="rule-human-unclear",
+            name="Просьба человека без понятной цели",
+            description="Сначала уточнить, касается ли вопрос дел компании",
+            keywords=[],
+            is_critical=False,
+            intent="other",
+            action_required="continue_dialog",
+            enabled=True,
+        )
     # Посторонняя тема + «соедините» без дела, и нет spam/offtopic-правила
     if bait and skipped_human:
         return RoutingRule(

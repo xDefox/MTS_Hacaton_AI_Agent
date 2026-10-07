@@ -88,6 +88,9 @@ def ensure_ai_disclosure(agent_response: str) -> str:
 
 
 def _build_messages(request: CallRequest, system_prompt: str) -> list[dict[str, str]]:
+    line_block = _line_preferences_block(request)
+    if line_block:
+        system_prompt = f"{system_prompt}\n\n{line_block}"
     messages: list[dict[str, str]] = [{"role": "system", "text": system_prompt}]
 
     if request.dialog_history:
@@ -105,6 +108,55 @@ def _build_messages(request: CallRequest, system_prompt: str) -> list[dict[str, 
     )
     messages.append({"role": "user", "text": user_block})
     return messages
+
+
+_ROUTING_HINTS = {
+    "voice": "Маршрут линии: голос. Решай вопрос в звонке, в чат отправляй только длинные документы.",
+    "chat": (
+        "Маршрут линии: чат. Деловые вопросы (КП, поддержка, партнёрство) переводи в "
+        "Telegram-чат: action_required=offer_telegram_chat."
+    ),
+    "hybrid": (
+        "Маршрут линии: гибрид. Короткое — голосом, сложное и с деталями — "
+        "предложи Telegram-чат (offer_telegram_chat)."
+    ),
+}
+
+
+def _line_preferences_block(request: CallRequest) -> str:
+    """Персональные настройки линии из приложения: маршрут, тон, горячая линия, шаблоны."""
+    if not request.line_phone:
+        return ""
+    from backend.services.service_settings import get_settings as get_line_settings
+
+    try:
+        prefs = get_line_settings(request.line_phone)
+    except Exception as exc:  # noqa: BLE001 — без настроек работаем по умолчанию
+        logger.warning("Line settings unavailable phone=%s: %s", request.line_phone, exc)
+        return ""
+
+    lines = ["Настройки этой линии (заданы владельцем в приложении):"]
+    lines.append(_ROUTING_HINTS.get(prefs.get("routing"), _ROUTING_HINTS["voice"]))
+    if prefs.get("mode") == "loyal":
+        lines.append("Тон: лояльный — тёплый, допускай короткую поддерживающую фразу.")
+    else:
+        lines.append("Тон: строгий — деловой, коротко, без лишних любезностей.")
+    if not prefs.get("hotline", True):
+        lines.append(
+            "Горячая линия выключена: не обещай соединить, вместо transfer_to_human "
+            "ставь callback_recommended и говори, что Иван перезвонит."
+        )
+    if prefs.get("scenarios"):
+        faq = (prefs.get("template_faq") or "").strip()
+        greet = (prefs.get("template_greeting") or "").strip()
+        if faq:
+            lines.append(
+                "Шаблоны владельца — это факты, отвечай на их основе своими словами, "
+                "не зачитывай дословно и только если вопрос к ним относится:\n" + faq
+            )
+        if greet:
+            lines.append(f"Приветствие линии (уже прозвучало в начале, не повторяй): {greet}")
+    return "\n".join(lines)
 
 
 def _extract_text(result: Any) -> str:
@@ -279,7 +331,7 @@ def _run_yandex_sync(messages: list[dict[str, str]], settings: Settings) -> str:
     except httpx.ConnectError as exc:
         raise YandexLLMError(
             "Нет доступа к llm.api.cloud.yandex.net (внешний YandexGPT). "
-            "Включи VPN / другой интернет — с этой сети Yandex Cloud недоступен."
+            "Отключи VPN (через VPN Yandex Cloud отклоняет соединение) или проверь интернет."
         ) from exc
     except httpx.HTTPError as exc:
         raise YandexLLMError(f"YandexGPT HTTP error: {exc}") from exc
@@ -307,12 +359,12 @@ def _run_yandex_sync(messages: list[dict[str, str]], settings: Settings) -> str:
 
 def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
     """Safe degraded answer so the demo API stays alive if the model fails."""
+    from backend.services.routing_rules import classify_human_request
+
     logger.warning("Using fallback response: %s", reason)
     text_lower = request.user_message.lower()
-    wants_human = any(
-        phrase in text_lower
-        for phrase in ("соедините", "с менеджером", "с человеком", "с иваном", "оператор")
-    )
+    human_kind = classify_human_request(request.user_message)
+    wants_human = human_kind in {"business", "pure"}
     is_junk = _is_non_business_junk(request.user_message) and not wants_human
     is_critical = (not is_junk) and (
         wants_human
@@ -386,7 +438,7 @@ def _is_non_business_junk(text: str) -> bool:
 
     if is_human_bait_without_business(text):
         return True
-    t = (text or "").lower()
+    t = f" {(text or '').lower()} "
     # Чистая просьба человека без мусора — не junk
     if has_human_request(t) and has_business_context(t):
         return False
@@ -411,7 +463,7 @@ def _guard_non_business_escalation(request: CallRequest, response: CallResponse)
         response.action_required,
         response.is_critical,
     )
-    text_lower = request.user_message.lower()
+    text_lower = f" {request.user_message.lower()} "
     intent = (
         Intent.spam
         if any(
@@ -421,7 +473,10 @@ def _guard_non_business_escalation(request: CallRequest, response: CallResponse)
                 "предлага",
                 "скидк",
                 "реклам",
-                "директ",
+                "директ ",
+                "директе",
+                "директа",
+                "директу",
                 "шины",
                 "шину",
                 "автошин",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +80,7 @@ def test_api_hotline_stats():
     client = TestClient(app)
     r = client.post(
         "/api/v1/hotline",
-        json={"session_id": "hl-1", "user_message": "Нужен человек", "client_phone": "+7000"},
+        json={"session_id": f"hl-{uuid.uuid4().hex[:8]}", "user_message": "Нужен человек", "client_phone": "+7000"},
     )
     assert r.status_code == 200, r.text
     body = r.json()

@@ -31,7 +31,7 @@ from backend.schemas import (
 )
 from backend.services import service_settings as svc_settings
 from backend.services.analytics import build_call_stats
-from backend.services.call_agent import process_incoming_call
+from backend.services.call_agent import finalize_agent_reply, process_incoming_call
 from backend.services.call_history import (
     call_log_to_item,
     get_call_log,
@@ -66,7 +66,7 @@ from backend.services.tts_storage import (
     find_call_audio,
     save_call_audio,
 )
-from backend.services.yandex_llm import _strip_leading_disclosures, ensure_ai_disclosure
+from backend.services.yandex_llm import _strip_leading_disclosures
 from backend.config import get_settings
 from backend.services.warmup import warmup_demo_stack
 from backend.services.greeting_audio import greeting_audio_url
@@ -535,8 +535,15 @@ async def hotline_transfer(
     Без LLM — мгновенно для демо.
     """
     settings = get_settings()
-    text = ensure_ai_disclosure(
-        "Соединяю вас с Иваном. Пожалуйста, оставайтесь на линии."
+    data = CallRequest(
+        session_id=body.session_id,
+        user_message=body.user_message,
+        line_phone=body.line_phone or "",
+        client_phone=body.client_phone or "unknown",
+        direction=body.direction or "inbound",
+    )
+    text = finalize_agent_reply(
+        data, "Соединяю вас с Иваном. Пожалуйста, оставайтесь на линии."
     )
     response = CallResponse(
         agent_response=text,
@@ -552,13 +559,6 @@ async def hotline_transfer(
         recommended_next_step="Принять звонок / перезвонить немедленно",
         session_id=body.session_id,
         model="hotline-rule",
-    )
-    data = CallRequest(
-        session_id=body.session_id,
-        user_message=body.user_message,
-        line_phone=body.line_phone or "",
-        client_phone=body.client_phone or "unknown",
-        direction=body.direction or "inbound",
     )
     row = save_call_log(db, data, response)
     response.call_id = row.id

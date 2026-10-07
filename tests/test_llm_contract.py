@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -188,7 +189,7 @@ async def test_mocked_process_call() -> int:
 
     # spam must be downgraded by rules even if mock escalates
     with patch(
-        "backend.services.call_agent.process_call_with_ollama",
+        "backend.services.call_agent.process_call_with_yandex",
         new=AsyncMock(side_effect=fake_ollama),
     ):
         spam = await process_incoming_call(
@@ -218,18 +219,41 @@ async def test_mocked_process_call() -> int:
 
     # API path with mock
     client = TestClient(app)
+    api_session = f"api-mock-{uuid.uuid4().hex[:8]}"
     with patch(
-        "backend.services.call_agent.process_call_with_ollama",
+        "backend.services.call_agent.process_call_with_yandex",
         new=AsyncMock(side_effect=fake_ollama),
     ):
         resp = client.post(
             "/api/v1/process_call",
             json={
-                "session_id": "api-mock-1",
+                "session_id": api_session,
                 "user_message": "Расскажи стишок",
                 "client_phone": "+7000",
             },
         )
+        second = client.post(
+            "/api/v1/process_call",
+            json={
+                "session_id": api_session,
+                "user_message": "Сколько стоит бензин, свяжите с менеджером",
+                "client_phone": "+7000",
+            },
+        )
+    if second.status_code != 200:
+        print("FAIL api second turn status", second.text)
+        failed += 1
+    else:
+        body2 = second.json()
+        reply2 = body2.get("agent_response", "").lower()
+        if "искусственным интеллектом" in reply2:
+            print("FAIL disclosure repeated on 2nd turn", reply2)
+            failed += 1
+        elif body2.get("action_required") == "transfer_to_human" or "переведу" in reply2:
+            print("FAIL petrol bait transferred", body2)
+            failed += 1
+        else:
+            print("OK   2nd turn: no disclosure, petrol bait not transferred")
     if resp.status_code != 200:
         print("FAIL api mock status", resp.text)
         failed += 1
@@ -275,7 +299,7 @@ def test_ready_and_stats() -> int:
     # seed analytics
     client.post("/api/v1/hotline", json={"session_id": "st1", "user_message": "человек"})
     with patch(
-        "backend.services.call_agent.process_call_with_ollama",
+        "backend.services.call_agent.process_call_with_yandex",
         new=AsyncMock(
             side_effect=lambda request, settings=None: CallResponse(
                 agent_response=ensure_ai_disclosure("ок"),

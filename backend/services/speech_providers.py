@@ -48,15 +48,31 @@ async def transcribe_bytes(
     settings = get_settings()
     provider = (settings.stt_provider or "local").strip().lower()
     if provider == "yandex":
+        from backend.services.audio_cleanup import SAMPLE_RATE, clean_for_stt
         from backend.services.speechkit_stt import transcribe_audio
+
+        payload, fmt, rate = audio, audio_format, sample_rate_hertz
+        # «Сырой» LPCM без RIFF-заголовка не декодируется — шлём как есть
+        if audio_format != "lpcm" or audio[:4] == b"RIFF":
+            cleaned = await asyncio.to_thread(clean_for_stt, audio)
+            if cleaned:
+                payload, fmt, rate = cleaned, "lpcm", SAMPLE_RATE
 
         try:
             text = await transcribe_audio(
-                audio,
-                audio_format=audio_format,  # type: ignore[arg-type]
+                payload,
+                audio_format=fmt,  # type: ignore[arg-type]
                 lang=lang,
-                sample_rate_hertz=sample_rate_hertz,
+                sample_rate_hertz=rate,
             )
+            if not text.strip() and payload is not audio:
+                logger.info("Empty transcript after cleanup, retry with original audio")
+                text = await transcribe_audio(
+                    audio,
+                    audio_format=audio_format,  # type: ignore[arg-type]
+                    lang=lang,
+                    sample_rate_hertz=sample_rate_hertz,
+                )
             return text, "yandex-speechkit"
         except Exception as exc:  # noqa: BLE001 — нет ключей / сеть → Whisper
             logger.warning("SpeechKit STT failed, fallback to local Whisper: %s", exc)

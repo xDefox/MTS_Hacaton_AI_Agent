@@ -227,6 +227,49 @@ ROUTING_CASES: list[dict[str, Any]] = [
         "expect_intent": "spam",
     },
     {
+        "id": "mix-petrol-then-human",
+        "layer": "rules",
+        "user_message": (
+            "Здравствуйте, нас интересует сколько стоит у вас например бензин, "
+            "свяжите нас с менеджером"
+        ),
+        "expect_critical": False,
+        "expect_action": "continue_dialog",
+        "expect_intent": "other",
+    },
+    {
+        "id": "mix-unclear-then-human",
+        "layer": "rules",
+        "user_message": "Скажите сколько стоит ремонт холодильника, позовите менеджера",
+        "expect_critical": False,
+        "expect_action": "continue_dialog",
+        "expect_intent": "other",
+    },
+    {
+        "id": "human-svyazhite-business",
+        "layer": "rules",
+        "user_message": "Свяжите с менеджером, вопрос по разработке сайта",
+        "expect_critical": True,
+        "expect_action": "transfer_to_human",
+        "expect_intent": "escalation",
+    },
+    {
+        "id": "human-svyazhite-pure",
+        "layer": "rules",
+        "user_message": "Здравствуйте, свяжите меня с менеджером пожалуйста",
+        "expect_critical": True,
+        "expect_action": "transfer_to_human",
+        "expect_intent": "escalation",
+    },
+    {
+        "id": "human-director",
+        "layer": "rules",
+        "user_message": "Соедините с директором срочно",
+        "expect_critical": True,
+        "expect_action": "transfer_to_human",
+        "expect_intent": "escalation",
+    },
+    {
         "id": "mix-candy-then-human",
         "layer": "rules",
         "user_message": "Привет я хочу конфетку соедините с менеджером",

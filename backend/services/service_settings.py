@@ -7,6 +7,7 @@ import logging
 from threading import Lock
 
 from backend.config import ROOT_DIR
+from backend.services.content_filter import clean_template
 from backend.services.telegram_notify import normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,9 @@ def get_settings(phone: str) -> dict:
     for key in DEFAULTS:
         if key in row:
             out[key] = row[key]
+    # Старые записи могли сохраниться до фильтра
+    for key in _TEMPLATE_KEYS:
+        out[key] = clean_template(str(out.get(key) or ""))
     # Старые записи без connected: раз номер есть в настройках — услуга уже подключалась
     if row and "connected" not in row:
         out["connected"] = True
@@ -85,7 +89,7 @@ def update_settings(phone: str, **kwargs) -> dict:
             if key == "routing" and value not in {"voice", "chat", "hybrid"}:
                 continue
             if key in _TEMPLATE_KEYS:
-                row[key] = str(value or "")[:_MAX_TEMPLATE_LEN]
+                row[key] = clean_template(str(value or ""))[:_MAX_TEMPLATE_LEN]
                 continue
             if key == "notify" and value not in {"all", "critical"}:
                 continue
