@@ -15,6 +15,7 @@ SETTINGS_PATH = ROOT_DIR / "data" / "service_settings.json"
 _lock = Lock()
 
 DEFAULTS = {
+    "connected": False,       # услуга подключена в приложении МТС (персистентно)
     "routing": "voice",       # voice | chat | hybrid
     "history": True,          # история и саммари в боте
     "scenarios": True,        # использовать шаблоны ответов
@@ -63,6 +64,9 @@ def get_settings(phone: str) -> dict:
     for key in DEFAULTS:
         if key in row:
             out[key] = row[key]
+    # Старые записи без connected: раз номер есть в настройках — услуга уже подключалась
+    if row and "connected" not in row:
+        out["connected"] = True
     out["phone"] = phone
     return out
 
@@ -87,7 +91,7 @@ def update_settings(phone: str, **kwargs) -> dict:
                 continue
             if key == "mode" and value not in {"strict", "loyal"}:
                 continue
-            if key in {"history", "scenarios", "hotline"}:
+            if key in {"connected", "history", "scenarios", "hotline"}:
                 row[key] = bool(value)
             else:
                 row[key] = value

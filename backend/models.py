@@ -19,8 +19,14 @@ class CallLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(String(128), index=True)
+    # Номер линии МТС (владелец услуги) — по нему фильтруем «свои» звонки
+    line_phone: Mapped[str] = mapped_column(String(64), default="", index=True)
+    # Номер звонящего (вторая сторона)
     caller_phone: Mapped[str] = mapped_column(String(64), default="unknown")
+    # inbound = входящий на линию, outbound = исходящий
+    direction: Mapped[str] = mapped_column(String(16), default="inbound")
 
+    # вход (речь звонящего) / выход (ответ агента)
     user_message: Mapped[str] = mapped_column(Text)
     agent_response: Mapped[str] = mapped_column(Text)
     summary: Mapped[str] = mapped_column(Text)

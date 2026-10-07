@@ -74,11 +74,13 @@ def main() -> None:
     check("scenarios-delete", sc_del.status_code == 200, sc_del.text)
 
     # hotline
+    line = "79990001122"
     hl = client.post(
         "/api/v1/hotline",
         json={
             "session_id": "api-hl-1",
             "user_message": "Нужен человек срочно",
+            "line_phone": line,
             "client_phone": "+79990001122",
         },
     )
@@ -100,10 +102,12 @@ def main() -> None:
 
     # history + patch
     if isinstance(call_id, int):
-        one = client.get(f"/api/v1/calls/{call_id}")
+        one = client.get(f"/api/v1/calls/{call_id}", params={"phone": line})
         check("calls-get", one.status_code == 200, one.text)
+        check("calls-input-output", "input" in one.json() and "output" in one.json(), one.text)
         patch = client.patch(
             f"/api/v1/calls/{call_id}",
+            params={"phone": line},
             json={"summary": "Ручная правка для теста API"},
         )
         check("calls-patch", patch.status_code == 200, patch.text)
@@ -112,7 +116,10 @@ def main() -> None:
             (patch.json() or {}).get("summary") == "Ручная правка для теста API",
             str(patch.text),
         )
-        lst = client.get("/api/v1/calls", params={"critical_only": True, "limit": 20})
+        lst = client.get(
+            "/api/v1/calls",
+            params={"phone": line, "critical_only": True, "limit": 20},
+        )
         check("calls-list-critical", lst.status_code == 200, lst.text)
         ids = [i["id"] for i in lst.json().get("items", [])]
         check("calls-list-contains", call_id in ids, str(ids[:10]))

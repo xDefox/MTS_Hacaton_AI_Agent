@@ -37,9 +37,15 @@ def main() -> None:
             print(f"FAIL {name}: {detail}")
 
     # seed notification via hotline
+    line = "79001110001"
     hl = client.post(
         "/api/v1/hotline",
-        json={"session_id": "ctrl-hl", "user_message": "нужен человек", "client_phone": "+7111"},
+        json={
+            "session_id": "ctrl-hl",
+            "user_message": "нужен человек",
+            "line_phone": line,
+            "client_phone": "+7111",
+        },
     )
     check("hotline", hl.status_code == 200, hl.text)
     call_id = (hl.json() or {}).get("call_id")
@@ -50,7 +56,7 @@ def main() -> None:
 
     # audit via view
     if isinstance(call_id, int):
-        client.get(f"/api/v1/calls/{call_id}")
+        client.get(f"/api/v1/calls/{call_id}", params={"phone": line})
     audit = client.get("/api/v1/audit")
     check("audit-200", audit.status_code == 200, audit.text)
     check("audit-nonempty", audit.json().get("total", 0) >= 1, audit.text)

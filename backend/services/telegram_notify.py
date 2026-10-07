@@ -171,14 +171,16 @@ def _save_lines(data: dict) -> None:
 
 
 def register_line(phone: str) -> str:
-    """Фронт: номер из заглушки МТС (ещё без /start)."""
+    """Фронт: номер из заглушки МТС. Не сбрасывает уже активный /start."""
     phone = normalize_phone(phone)
     if not phone:
         raise ValueError("empty phone")
     with _lock:
         data = _load_lines()
-        row = data.get(phone) or {"chat_id": None}
-        row["activated"] = False
+        row = dict(data.get(phone) or {"chat_id": None, "activated": False})
+        # Повторный вход в приложение не должен гасить Telegram-активацию.
+        if "activated" not in row:
+            row["activated"] = False
         row["updated_at"] = time.time()
         data[phone] = row
         _save_lines(data)

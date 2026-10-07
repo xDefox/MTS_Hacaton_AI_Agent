@@ -97,9 +97,15 @@ def test_session_filter_and_validation() -> int:
     sid = "session-filter-xyz"
 
     # create two turns via hotline + process mock
+    line = "79001110000"
     client.post(
         "/api/v1/hotline",
-        json={"session_id": sid, "user_message": "нужен человек", "client_phone": "+1"},
+        json={
+            "session_id": sid,
+            "user_message": "нужен человек",
+            "line_phone": line,
+            "client_phone": "+79001112233",
+        },
     )
     with patch(
         "backend.services.call_agent.process_call_with_ollama",
@@ -119,10 +125,17 @@ def test_session_filter_and_validation() -> int:
     ):
         client.post(
             "/api/v1/process_call",
-            json={"session_id": sid, "user_message": "Ещё вопрос по часам работы"},
+            json={
+                "session_id": sid,
+                "line_phone": line,
+                "user_message": "Ещё вопрос по часам работы",
+            },
         )
 
-    filtered = client.get("/api/v1/calls", params={"session_id": sid, "limit": 50})
+    filtered = client.get(
+        "/api/v1/calls",
+        params={"phone": line, "session_id": sid, "limit": 50},
+    )
     if filtered.status_code != 200:
         print("FAIL session filter status", filtered.text)
         failed += 1

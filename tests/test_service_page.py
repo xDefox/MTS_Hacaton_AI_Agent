@@ -5,8 +5,11 @@
 """
 
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import flet as ft
+import httpx
+import pytest
 
 from frontend.app import main as build_page
 from frontend.assests import (
@@ -20,6 +23,54 @@ from frontend.assests import (
     SERVICE_NAME,
     TELEGRAM_OPEN_TEXT,
 )
+
+# In-memory настройки услуги — без реального uvicorn
+_FAKE_SETTINGS: dict[str, dict] = {}
+
+
+class _FakeResp:
+    def __init__(self, status_code=200, payload=None):
+        self.status_code = status_code
+        self._payload = payload or {}
+
+    def json(self):
+        return self._payload
+
+
+def _fake_httpx_get(url, params=None, timeout=None, **kwargs):
+    params = params or {}
+    path = urlparse(str(url)).path
+    if path.endswith("/service/settings"):
+        phone = "".join(c for c in str(params.get("phone") or "") if c.isdigit())
+        row = dict(_FAKE_SETTINGS.get(phone) or {"connected": False})
+        row["phone"] = phone
+        return _FakeResp(200, row)
+    if path.endswith("/telegram/status"):
+        return _FakeResp(200, {"activated": False})
+    if "/calls" in path:
+        return _FakeResp(200, {"items": [], "total": 0, "total_calls": 0})
+    return _FakeResp(200, {})
+
+
+def _fake_httpx_post(url, json=None, params=None, timeout=None, **kwargs):
+    path = urlparse(str(url)).path
+    body = json or {}
+    if path.endswith("/service/settings"):
+        phone = "".join(c for c in str(body.get("phone") or "") if c.isdigit())
+        row = dict(_FAKE_SETTINGS.get(phone) or {})
+        row.update({k: v for k, v in body.items() if k != "phone" and v is not None})
+        _FAKE_SETTINGS[phone] = row
+        out = dict(row)
+        out["phone"] = phone
+        return _FakeResp(200, out)
+    return _FakeResp(200, {"ok": True})
+
+
+@pytest.fixture(autouse=True)
+def _isolate_api(monkeypatch):
+    _FAKE_SETTINGS.clear()
+    monkeypatch.setattr(httpx, "get", _fake_httpx_get)
+    monkeypatch.setattr(httpx, "post", _fake_httpx_post)
 
 
 class _Window:
@@ -264,6 +315,26 @@ def test_telegram_option_only_after_connect():
     assert ui["features_panel"].visible, "после отключения услугу можно подключить снова"
     assert ui["back_btn"].visible
     assert ui["tg_active"].value is False, "старый /start не включает ползунок сам"
+
+
+def test_service_persists_for_same_phone_on_relogin():
+    """Повторный вход под тем же номером — услуга уже в «Подключённые»."""
+    page = _page()
+    ui = _enter_mts(page, phone="+7 900 222-33-44")
+    ui["consent"].value = True
+    ui["consent"].on_change(SimpleNamespace(control=ui["consent"]))
+    ui["connect_btn"].on_click(None)
+    ui["back_btn"].on_click(None)
+    assert ui["connected_card"].visible
+    assert "79002223344" in _FAKE_SETTINGS
+    assert _FAKE_SETTINGS["79002223344"].get("connected") is True
+
+    # «Новый» запуск приложения — тот же номер
+    page2 = _page()
+    ui2 = _enter_mts(page2, phone="+7 900 222-33-44")
+    assert ui2["connected_card"].visible, "услуга должна восстановиться из настроек"
+    assert not ui2["service_card"].visible
+    assert not ui2["connected_empty"].visible
 
 
 def _flatten(control):

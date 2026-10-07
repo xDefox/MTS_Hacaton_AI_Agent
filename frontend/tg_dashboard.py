@@ -18,6 +18,12 @@ BTN_DASH = "Дашборд"
 BTN_ALL = "Все звонки"
 BTN_CRIT = "Важные"
 BTN_SET = "Настройки"
+BTN_CALL = "📞 Начать звонок"
+BTN_HANGUP = "⏹ Завершить звонок"
+
+DEFAULT_GREETING = (
+    "Здравствуйте! Вы говорите с виртуальным ассистентом. Чем могу помочь?"
+)
 
 INTENT_RU = {
     "commercial": "Коммерция",
@@ -51,11 +57,47 @@ MODE_RU = {
 def main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text=BTN_CALL)],
             [KeyboardButton(text=BTN_DASH), KeyboardButton(text=BTN_ALL)],
             [KeyboardButton(text=BTN_CRIT), KeyboardButton(text=BTN_SET)],
         ],
         resize_keyboard=True,
     )
+
+
+def call_keyboard() -> ReplyKeyboardMarkup:
+    """Клавиатура во время эмуляции входящего звонка."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BTN_HANGUP)]],
+        resize_keyboard=True,
+    )
+
+
+def demo_greeting_text(prefs: dict) -> str:
+    """Приветствие для демо-звонка: шаблон линии или дефолт."""
+    if prefs.get("scenarios"):
+        greet = (prefs.get("template_greeting") or "").strip()
+        if greet:
+            return greet
+    return DEFAULT_GREETING
+
+
+def format_call_turn(payload: dict) -> str:
+    """Краткий текст реплики после ответа агента (для чата рядом с ГС)."""
+    flag = "⚠️" if payload.get("is_critical") else "•"
+    cid = payload.get("call_id") or payload.get("id") or "—"
+    transcript = html.escape(_clip(str(payload.get("transcript") or ""), 200))
+    reply = html.escape(_clip(str(payload.get("agent_response") or "—"), 350))
+    summary = html.escape(_clip(str(payload.get("summary") or "—"), 180))
+    action = _action(payload.get("action_required"))
+    lines = [
+        f"{flag} <b>Реплика #{cid}</b>",
+        f"Вы: {transcript or '—'}",
+        f"Агент: {reply}",
+        f"Резюме: {summary}",
+        f"Действие: {action}",
+    ]
+    return "\n".join(lines)
 
 
 def history_keyboard(items: list[dict], *, critical: bool) -> InlineKeyboardMarkup:
@@ -141,13 +183,18 @@ def format_history(items: list[dict], *, critical: bool, total: int) -> str:
 
 def format_detail(item: dict) -> str:
     flag = "⚠️ Важно" if item.get("is_critical") else "Звонок"
-    phone = html.escape(format_phone(str(item.get("caller_phone") or "")))
+    caller = html.escape(format_phone(str(item.get("caller_phone") or "")))
+    line = html.escape(format_phone(str(item.get("line_phone") or "")))
     who = html.escape(str(item.get("caller_name") or "").strip()) or "не представился"
+    direction = "входящий" if (item.get("direction") or "inbound") == "inbound" else "исходящий"
+    inbound = item.get("input") or item.get("user_message") or "—"
+    outbound = item.get("output") or item.get("agent_response") or "—"
     lines = [
         f"<b>{flag} #{item.get('id')}</b>",
         f"Когда: {_when(item.get('created_at'))}",
+        f"Линия: {line} · {direction}",
         f"Кто: {who}",
-        f"Номер: {phone}",
+        f"Звонящий: {caller}",
         f"Намерение: {_intent(item.get('intent'))}",
         f"Приоритет: {PRIORITY_RU.get(str(item.get('priority') or ''), '—')}",
         f"Действие: {_action(item.get('action_required'))}",
@@ -155,8 +202,11 @@ def format_detail(item: dict) -> str:
         "<b>Резюме</b>",
         html.escape(str(item.get("summary") or "—")),
         "",
-        "<b>Ответ агента</b>",
-        html.escape(_clip(str(item.get("agent_response") or "—"), 400)),
+        "<b>Вход</b>",
+        html.escape(_clip(str(inbound), 400)),
+        "",
+        "<b>Выход</b>",
+        html.escape(_clip(str(outbound), 400)),
     ]
     step = str(item.get("recommended_next_step") or "").strip()
     if step:

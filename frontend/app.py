@@ -90,6 +90,25 @@ def _square_checkbox(**kwargs) -> ft.Checkbox:
     )
 
 
+def _mts_text_field(**kwargs) -> ft.TextField:
+    """Поле ввода: тёмный текст значения, серая подсказка/лейбл — не сливаются."""
+    defaults = dict(
+        color=MTS_DARK,
+        cursor_color=MTS_RED,
+        bgcolor=MTS_WHITE,
+        filled=True,
+        fill_color=MTS_WHITE,
+        border_color=MTS_GRAY,
+        focused_border_color=MTS_RED,
+        focused_color=MTS_DARK,
+        label_style=ft.TextStyle(color=MTS_GRAY, size=13),
+        hint_style=ft.TextStyle(color=MTS_GRAY, size=14),
+        text_style=ft.TextStyle(color=MTS_DARK, size=15),
+    )
+    defaults.update(kwargs)
+    return ft.TextField(**defaults)
+
+
 def main(page: ft.Page):
     page.title = "МТС — Подключение услуги"
     page.bgcolor = MTS_BG
@@ -110,7 +129,7 @@ def main(page: ft.Page):
     connected_phone = {"value": ""}
     service_on = {"value": False}
     tg_on = {"value": False}
-    login_phone = ft.TextField(
+    login_phone = _mts_text_field(
         label="Номер телефона",
         hint_text="+7 900 123-45-67",
         dense=True,
@@ -145,7 +164,11 @@ def main(page: ft.Page):
             pass
         profile_phone.value = format_phone(phone)
         profile_chip.visible = True
+        # Восстановить подключение услуги с бэка (тот же номер — услуга уже есть).
+        restored = _restore_service_state(phone)
         _show_catalog()
+        if restored:
+            _start_poll()
 
     def close_dialog(_=None):
         pop = getattr(page, "pop_dialog", None)
@@ -192,12 +215,12 @@ def main(page: ft.Page):
             pass
         close_dialog()
         service_on["value"] = True
-        _open_settings(reset_tg=not tg_on["value"])
+        _open_settings(reset_tg=not tg_on["value"], connected=True)
         _start_poll()
 
     def open_connected(_=None):
         """Уже подключена — сразу в настройки, без повторного «Подключить»."""
-        _open_settings(reset_tg=False)
+        _open_settings(reset_tg=False, connected=True)
 
     def _sync_catalog_cards():
         on = service_on["value"]
@@ -217,7 +240,7 @@ def main(page: ft.Page):
         page.title = "МТС — Услуги"
         page.update()
 
-    def _open_settings(*, reset_tg: bool):
+    def _open_settings(*, reset_tg: bool, connected: bool = True):
         phone = connected_phone["value"]
         header_subtitle.value = f"| {SERVICE_NAME}"
         page.title = f"МТС — {SERVICE_NAME}"
@@ -233,7 +256,7 @@ def main(page: ft.Page):
             tg_active.value = False
             tg_status_text.value = f"Ожидает /start · {format_phone(phone)}"
             tg_status_text.color = MTS_GRAY
-        _push_settings()
+        _push_settings(connected=connected)
         _show_tab("dash")
 
     def go_catalog(_=None):
@@ -249,6 +272,7 @@ def main(page: ft.Page):
         tg_status_text.color = MTS_GRAY
         service_on["value"] = False
         phone = connected_phone["value"]
+        _push_settings(connected=False)
         try:
             if phone:
                 httpx.post(
@@ -641,40 +665,43 @@ def main(page: ft.Page):
             for key, label in ROUTING_LABELS.items()
         ],
         width=min(320, 280),
+        color=MTS_DARK,
+        bgcolor=MTS_WHITE,
+        filled=True,
+        fill_color=MTS_WHITE,
         border_color=MTS_GRAY,
         focused_border_color=MTS_RED,
+        label_style=ft.TextStyle(color=MTS_GRAY, size=13),
+        text_style=ft.TextStyle(color=MTS_DARK, size=15),
     )
 
     scenarios_switch = _square_checkbox(label=TEMPLATES_USE_LABEL, value=True)
-    template_greeting = ft.TextField(
+    template_greeting = _mts_text_field(
         label=TEMPLATE_GREETING_LABEL,
         multiline=True,
         min_lines=2,
         max_lines=4,
-        border_color=MTS_GRAY,
-        focused_border_color=MTS_RED,
     )
-    template_faq = ft.TextField(
+    template_faq = _mts_text_field(
         label=TEMPLATE_FAQ_LABEL,
         multiline=True,
         min_lines=4,
         max_lines=8,
-        border_color=MTS_GRAY,
-        focused_border_color=MTS_RED,
     )
     templates_off_hint = ft.Text(
-        "Шаблоны выключены — агент не использует текст ниже.",
+        "Шаблоны выключены — поля скрыты, агент их не использует.",
         size=12,
         color=MTS_GRAY,
         visible=False,
     )
 
-    def _settings_payload() -> dict:
+    def _settings_payload(*, connected: bool | None = None) -> dict:
         routing = routing_dropdown.value or ROUTING_VOICE
         if routing not in ROUTING_LABELS:
             routing = ROUTING_VOICE
-        return {
+        payload = {
             "phone": connected_phone["value"],
+            "connected": bool(service_on["value"]) if connected is None else bool(connected),
             "routing": routing,
             "history": bool(history_check.value),
             "scenarios": bool(scenarios_switch.value),
@@ -684,8 +711,9 @@ def main(page: ft.Page):
             "template_greeting": (template_greeting.value or "").strip(),
             "template_faq": (template_faq.value or "").strip(),
         }
+        return payload
 
-    def _push_settings(_=None):
+    def _push_settings(_=None, *, connected: bool | None = None):
         """Фронт — источник правды; бот только читает (даже без /start)."""
         phone = connected_phone["value"]
         if len(phone) < 10:
@@ -693,7 +721,7 @@ def main(page: ft.Page):
         try:
             httpx.post(
                 f"{API_BASE}/api/v1/service/settings",
-                json=_settings_payload(),
+                json=_settings_payload(connected=connected),
                 timeout=3.0,
             )
         except httpx.RequestError:
@@ -713,7 +741,50 @@ def main(page: ft.Page):
         if data.get("template_faq") is not None:
             template_faq.value = str(data.get("template_faq") or "")
 
+    def _restore_service_state(phone: str) -> bool:
+        """Подтянуть connected/настройки с API; True если услуга уже подключена."""
+        if len(phone) < 10:
+            service_on["value"] = False
+            return False
+        try:
+            resp = httpx.get(
+                f"{API_BASE}/api/v1/service/settings",
+                params={"phone": phone},
+                timeout=3.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                _apply_settings(data)
+                on = bool(data.get("connected"))
+                service_on["value"] = on
+                if on:
+                    # Восстановить статус Telegram без сброса
+                    try:
+                        st = httpx.get(
+                            f"{API_BASE}/api/v1/telegram/status",
+                            params={"phone": phone},
+                            timeout=2.0,
+                        )
+                        if st.status_code == 200 and st.json().get("activated"):
+                            tg_on["value"] = True
+                            tg_active.value = True
+                            tg_status_text.value = f"Активировано · {format_phone(phone)}"
+                            tg_status_text.color = MTS_RED
+                        else:
+                            tg_on["value"] = False
+                            tg_active.value = False
+                            tg_status_text.value = f"Ожидает /start · {format_phone(phone)}"
+                            tg_status_text.color = MTS_GRAY
+                    except httpx.RequestError:
+                        pass
+                return on
+        except httpx.RequestError:
+            pass
+        service_on["value"] = False
+        return False
+
     def _load_settings() -> None:
+        """Подтянуть routing/шаблоны; флаг connected трогает только restore/connect/disconnect."""
         phone = connected_phone["value"]
         if len(phone) < 10:
             return
@@ -757,8 +828,8 @@ def main(page: ft.Page):
 
     def _sync_template_fields():
         enabled = bool(scenarios_switch.value)
-        template_greeting.disabled = not enabled
-        template_faq.disabled = not enabled
+        template_greeting.visible = enabled
+        template_faq.visible = enabled
         templates_off_hint.visible = not enabled
 
     def _effect_summary() -> str:
@@ -802,7 +873,12 @@ def main(page: ft.Page):
     def _load_dashboard():
         dash_body.controls.clear()
         try:
-            resp = httpx.get(f"{API_BASE}/api/v1/calls/stats", timeout=5.0)
+            phone = connected_phone["value"]
+            resp = httpx.get(
+                f"{API_BASE}/api/v1/calls/stats",
+                params={"phone": phone},
+                timeout=5.0,
+            )
         except httpx.RequestError:
             dash_body.controls.append(
                 ft.Text("API недоступен — запустите uvicorn на :8000", color=MTS_RED, size=13)
@@ -855,10 +931,15 @@ def main(page: ft.Page):
         flag = "⚠️ Важно" if item.get("is_critical") else "Звонок"
         action = ACTION_RU.get(str(item.get("action_required") or ""), str(item.get("action_required") or "—"))
         intent = INTENT_RU.get(str(item.get("intent") or ""), str(item.get("intent") or "—"))
+        direction = "входящий" if (item.get("direction") or "inbound") == "inbound" else "исходящий"
+        inbound = item.get("input") or item.get("user_message") or "—"
+        outbound = item.get("output") or item.get("agent_response") or "—"
         lines = [
             f"{flag} #{item.get('id')}",
             f"Когда: {_fmt_when(item.get('created_at'))}",
-            f"Номер: {format_phone(str(item.get('caller_phone') or ''))}",
+            f"Линия: {format_phone(str(item.get('line_phone') or connected_phone['value']))}",
+            f"Направление: {direction}",
+            f"Звонящий: {format_phone(str(item.get('caller_phone') or ''))}",
             f"Кто: {item.get('caller_name') or 'не представился'}",
             f"Намерение: {intent}",
             f"Приоритет: {PRIORITY_RU.get(str(item.get('priority') or ''), '—')}",
@@ -867,8 +948,11 @@ def main(page: ft.Page):
             "Резюме",
             str(item.get("summary") or "—"),
             "",
-            "Ответ агента",
-            str(item.get("agent_response") or "—")[:400],
+            "Вход",
+            str(inbound)[:400],
+            "",
+            "Выход",
+            str(outbound)[:400],
         ]
         if not scenarios_switch.value:
             lines += ["", "Шаблоны ответов выключены — см. вкладку «Шаблоны»."]
@@ -921,7 +1005,11 @@ def main(page: ft.Page):
         try:
             resp = httpx.get(
                 f"{API_BASE}/api/v1/calls",
-                params={"limit": 20, "critical_only": critical},
+                params={
+                    "phone": connected_phone["value"],
+                    "limit": 20,
+                    "critical_only": critical,
+                },
                 timeout=5.0,
             )
         except httpx.RequestError:

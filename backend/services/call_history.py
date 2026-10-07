@@ -10,14 +10,22 @@ from sqlalchemy.orm import Session
 
 from backend.models import CallLog
 from backend.schemas import CallHistoryItem, CallRequest, CallResponse, CallStats
+from backend.services.telegram_notify import normalize_phone
 
 logger = logging.getLogger(__name__)
 
 
 def save_call_log(db: Session, request: CallRequest, response: CallResponse) -> CallLog:
+    line = normalize_phone(request.line_phone or "")
+    caller = normalize_phone(request.client_phone or "") or (request.client_phone or "unknown")
+    direction = (request.direction or "inbound").strip().lower()
+    if direction not in {"inbound", "outbound"}:
+        direction = "inbound"
     row = CallLog(
         session_id=request.session_id,
-        caller_phone=request.client_phone or "unknown",
+        line_phone=line,
+        caller_phone=caller,
+        direction=direction,
         user_message=request.user_message,
         agent_response=response.agent_response,
         summary=response.summary,
@@ -36,18 +44,29 @@ def save_call_log(db: Session, request: CallRequest, response: CallResponse) -> 
     db.add(row)
     db.commit()
     db.refresh(row)
-    logger.info("CallLog saved id=%s critical=%s intent=%s", row.id, row.is_critical, row.intent)
+    logger.info(
+        "CallLog saved id=%s line=%s caller=%s critical=%s intent=%s",
+        row.id,
+        row.line_phone,
+        row.caller_phone,
+        row.is_critical,
+        row.intent,
+    )
     return row
 
 
 def list_call_logs(
     db: Session,
     *,
+    line_phone: str | None = None,
     critical_only: bool = False,
     session_id: str | None = None,
     limit: int = 100,
 ) -> list[CallLog]:
     stmt = select(CallLog).order_by(CallLog.created_at.desc()).limit(limit)
+    phone = normalize_phone(line_phone or "")
+    if phone:
+        stmt = stmt.where(CallLog.line_phone == phone)
     if critical_only:
         stmt = stmt.where(CallLog.is_critical.is_(True))
     if session_id:
@@ -59,8 +78,24 @@ def get_call_log(db: Session, call_id: int) -> CallLog | None:
     return db.get(CallLog, call_id)
 
 
-def summarize_call_logs(db: Session, *, limit: int = 500) -> CallStats:
-    rows = list_call_logs(db, critical_only=False, limit=limit)
+def get_call_log_for_line(db: Session, call_id: int, line_phone: str) -> CallLog | None:
+    """Карточка только если принадлежит линии пользователя."""
+    row = get_call_log(db, call_id)
+    if row is None:
+        return None
+    phone = normalize_phone(line_phone or "")
+    if not phone or normalize_phone(row.line_phone or "") != phone:
+        return None
+    return row
+
+
+def summarize_call_logs(
+    db: Session,
+    *,
+    line_phone: str | None = None,
+    limit: int = 500,
+) -> CallStats:
+    rows = list_call_logs(db, line_phone=line_phone, critical_only=False, limit=limit)
     total = len(rows)
     critical = sum(1 for row in rows if row.is_critical)
     intents = Counter(row.intent or "other" for row in rows)
@@ -83,6 +118,11 @@ def update_call_log(db: Session, call_id: int, patch: dict) -> CallLog | None:
     row = get_call_log(db, call_id)
     if row is None:
         return None
+    # input/output → колонки БД
+    if "input" in patch and patch["input"] is not None:
+        patch = {**patch, "user_message": patch["input"]}
+    if "output" in patch and patch["output"] is not None:
+        patch = {**patch, "agent_response": patch["output"]}
     allowed = {
         "user_message",
         "agent_response",
@@ -108,12 +148,18 @@ def update_call_log(db: Session, call_id: int, patch: dict) -> CallLog | None:
 
 
 def call_log_to_item(row: CallLog) -> CallHistoryItem:
+    inbound = row.user_message or ""
+    outbound = row.agent_response or ""
     return CallHistoryItem(
         id=row.id,
         session_id=row.session_id,
+        line_phone=row.line_phone or "",
         caller_phone=row.caller_phone,
-        user_message=row.user_message,
-        agent_response=row.agent_response,
+        direction=row.direction or "inbound",
+        input=inbound,
+        output=outbound,
+        user_message=inbound,
+        agent_response=outbound,
         summary=row.summary,
         is_critical=row.is_critical,
         priority=row.priority,

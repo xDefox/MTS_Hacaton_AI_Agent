@@ -14,9 +14,12 @@ from fastapi.testclient import TestClient
 
 from backend.main import app
 
+LINE = "79001234567"
+
 SCENARIOS = [
     {
         "session_id": "hist-commercial",
+        "line_phone": LINE,
         "client_phone": "+79001112233",
         "user_message": (
             "Добрый день, меня зовут Алексей из компании Альфа. "
@@ -25,11 +28,13 @@ SCENARIOS = [
     },
     {
         "session_id": "hist-spam",
+        "line_phone": LINE,
         "client_phone": "+79005556677",
         "user_message": "Здравствуйте! Предлагаем услуги продвижения в Директе со скидкой 40%.",
     },
     {
         "session_id": "hist-escalation",
+        "line_phone": LINE,
         "client_phone": "+79008889900",
         "user_message": "Соедините с менеджером, срочно по договору!",
     },
@@ -54,31 +59,50 @@ def main() -> None:
                 f"critical={body['is_critical']} intent={body['intent']} model={body['model']}"
             )
 
-        all_calls = client.get("/api/v1/calls")
+        all_calls = client.get("/api/v1/calls", params={"phone": LINE})
         assert all_calls.status_code == 200
         data = all_calls.json()
         print(f"history total={data['total']}")
         assert data["total"] >= 3
+        assert all(item.get("line_phone") == LINE for item in data["items"])
+        assert all("input" in item and "output" in item for item in data["items"])
+
+        # чужая линия — пусто
+        other = client.get("/api/v1/calls", params={"phone": "79009998877"})
+        assert other.status_code == 200
+        assert other.json()["total"] == 0
 
         # ТЗ: Иван видит важные отдельно
-        critical = client.get("/api/v1/calls", params={"critical_only": True})
+        critical = client.get(
+            "/api/v1/calls",
+            params={"phone": LINE, "critical_only": True},
+        )
         assert critical.status_code == 200
         crit = critical.json()
         print(f"critical_only total={crit['total']}")
         assert crit["total"] >= 2
         assert all(item["is_critical"] for item in crit["items"])
 
-        # ТЗ: детали = резюме + суть обращения
-        detail = client.get(f"/api/v1/calls/{created_ids[0]}")
+        # ТЗ: детали = резюме + вход/выход
+        detail = client.get(
+            f"/api/v1/calls/{created_ids[0]}",
+            params={"phone": LINE},
+        )
         assert detail.status_code == 200
         card = detail.json()
         assert card["summary"]
-        assert card["user_message"]
-        assert card["agent_response"]
+        assert card["input"] and card["output"]
+        assert card["user_message"] == card["input"]
         print("detail ok:", card["session_id"], "| summary:", card["summary"][:100])
 
-        missing = client.get("/api/v1/calls/999999")
+        missing = client.get("/api/v1/calls/999999", params={"phone": LINE})
         assert missing.status_code == 404
+        # чужой телефон не видит карточку
+        foreign = client.get(
+            f"/api/v1/calls/{created_ids[0]}",
+            params={"phone": "79009998877"},
+        )
+        assert foreign.status_code == 404
 
     print("=== history smoke OK (ТЗ: контроль / история) ===")
 

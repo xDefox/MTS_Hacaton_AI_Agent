@@ -3,7 +3,7 @@
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from backend.config import get_settings
@@ -22,6 +22,25 @@ def _ensure_sqlite_dir(database_url: str) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _migrate_call_logs_columns() -> None:
+    """Добавить line_phone / direction в уже существующую SQLite без Alembic."""
+    if not str(engine.url).startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(call_logs)")).fetchall()
+        if not rows:
+            return
+        names = {row[1] for row in rows}
+        if "line_phone" not in names:
+            conn.execute(
+                text("ALTER TABLE call_logs ADD COLUMN line_phone VARCHAR(64) DEFAULT ''")
+            )
+        if "direction" not in names:
+            conn.execute(
+                text("ALTER TABLE call_logs ADD COLUMN direction VARCHAR(16) DEFAULT 'inbound'")
+            )
+
+
 _settings = get_settings()
 _ensure_sqlite_dir(_settings.database_url)
 
@@ -36,6 +55,7 @@ def init_db() -> None:
     from backend import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _migrate_call_logs_columns()
 
 
 def get_db() -> Generator[Session, None, None]:

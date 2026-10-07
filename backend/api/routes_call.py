@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from typing import Literal, Optional
@@ -34,6 +35,7 @@ from backend.services.call_agent import process_incoming_call
 from backend.services.call_history import (
     call_log_to_item,
     get_call_log,
+    get_call_log_for_line,
     list_call_logs,
     save_call_log,
     summarize_call_logs,
@@ -86,6 +88,7 @@ class TelegramRegister(BaseModel):
 
 class ServiceSettingsBody(BaseModel):
     phone: str = Field(..., min_length=5)
+    connected: Optional[bool] = None
     routing: Optional[Literal["voice", "chat", "hybrid"]] = None
     history: Optional[bool] = None
     scenarios: Optional[bool] = None
@@ -144,6 +147,7 @@ def post_service_settings(body: ServiceSettingsBody) -> dict:
     try:
         return svc_settings.update_settings(
             body.phone,
+            connected=body.connected,
             routing=body.routing,
             history=body.history,
             scenarios=body.scenarios,
@@ -305,6 +309,15 @@ async def process_call_voice(
         False,
         description="Озвучка ответа (pyttsx3 медленная). Для демо лучше false + отдельно /synthesize",
     ),
+    line_phone: str = Form(
+        "",
+        description="Номер линии МТС (владелец услуги) — для фильтра истории",
+    ),
+    direction: str = Form("inbound"),
+    dialog_history_json: Optional[str] = Form(
+        None,
+        description='Опционально JSON: [{"role":"user"|"assistant","text":"..."}]',
+    ),
     db: Session = Depends(get_db),
 ) -> VoiceCallResponse:
     """Голос → Whisper STT → локальный LLM → (опц.) TTS → история."""
@@ -331,10 +344,25 @@ async def process_call_voice(
             "Попроси перефразировать и назвать цель звонка."
         )
 
+    dialog_history = None
+    if dialog_history_json:
+        try:
+            parsed = json.loads(dialog_history_json)
+            if isinstance(parsed, list):
+                dialog_history = parsed
+        except json.JSONDecodeError:
+            logger.warning("process_call_voice: invalid dialog_history_json")
+
+    dir_norm = (direction or "inbound").strip().lower()
+    if dir_norm not in {"inbound", "outbound"}:
+        dir_norm = "inbound"
     data = CallRequest(
         session_id=session_id,
         user_message=user_text,
+        line_phone=line_phone or "",
         client_phone=client_phone or "unknown",
+        direction=dir_norm,  # type: ignore[arg-type]
+        dialog_history=dialog_history,
     )
     t_llm = time.perf_counter()
     try:
@@ -371,6 +399,7 @@ async def process_call_voice(
 
 @router.get("/calls", response_model=CallHistoryList)
 def get_calls(
+    phone: str = Query(..., min_length=5, description="Номер линии МТС — только свои звонки"),
     critical_only: bool = Query(False, description="Только важные (is_critical)"),
     session_id: Optional[str] = Query(None, description="Фильтр по сессии звонка"),
     limit: int = Query(100, ge=1, le=500),
@@ -378,6 +407,7 @@ def get_calls(
 ) -> CallHistoryList:
     rows = list_call_logs(
         db,
+        line_phone=phone,
         critical_only=critical_only,
         session_id=session_id,
         limit=limit,
@@ -388,16 +418,21 @@ def get_calls(
 
 @router.get("/calls/stats", response_model=CallStats)
 def get_call_stats(
+    phone: str = Query(..., min_length=5, description="Номер линии МТС"),
     limit: int = Query(500, ge=1, le=1000),
     db: Session = Depends(get_db),
 ) -> CallStats:
-    """Дашборд: все / важные / разбивка по intent и действию."""
-    return summarize_call_logs(db, limit=limit)
+    """Дашборд: только звонки этой линии."""
+    return summarize_call_logs(db, line_phone=phone, limit=limit)
 
 
 @router.get("/calls/{call_id}", response_model=CallHistoryItem)
-def get_call_detail(call_id: int, db: Session = Depends(get_db)) -> CallHistoryItem:
-    row = get_call_log(db, call_id)
+def get_call_detail(
+    call_id: int,
+    phone: str = Query(..., min_length=5, description="Номер линии МТС"),
+    db: Session = Depends(get_db),
+) -> CallHistoryItem:
+    row = get_call_log_for_line(db, call_id, phone)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
     log_access("view_call", call_id=call_id)
@@ -408,9 +443,13 @@ def get_call_detail(call_id: int, db: Session = Depends(get_db)) -> CallHistoryI
 def patch_call(
     call_id: int,
     body: CallCorrectionIn,
+    phone: str = Query(..., min_length=5, description="Номер линии МТС"),
     db: Session = Depends(get_db),
 ) -> CallHistoryItem:
     """Ручная корректировка расшифровки / ответа ИИ / резюме (CJM)."""
+    owned = get_call_log_for_line(db, call_id, phone)
+    if owned is None:
+        raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
     row = update_call_log(db, call_id, body.model_dump(exclude_unset=True))
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
@@ -419,8 +458,12 @@ def patch_call(
 
 
 @router.get("/calls/{call_id}/audio")
-def get_call_audio(call_id: int, db: Session = Depends(get_db)) -> FileResponse:
-    row = get_call_log(db, call_id)
+def get_call_audio(
+    call_id: int,
+    phone: str = Query(..., min_length=5, description="Номер линии МТС"),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    row = get_call_log_for_line(db, call_id, phone)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Call {call_id} not found")
     path = find_call_audio(call_id)
@@ -436,11 +479,12 @@ def get_call_audio(call_id: int, db: Session = Depends(get_db)) -> FileResponse:
 
 @router.get("/stats")
 def get_stats(
+    phone: Optional[str] = Query(None, min_length=5, description="Номер линии (опц.)"),
     limit: int = Query(500, ge=1, le=2000),
     db: Session = Depends(get_db),
 ) -> dict:
     """Аналитика по звонкам (ТЗ: усиление ценности)."""
-    return build_call_stats(db, limit=limit)
+    return build_call_stats(db, line_phone=phone, limit=limit)
 
 
 @router.get("/routing_rules")
@@ -512,7 +556,9 @@ async def hotline_transfer(
     data = CallRequest(
         session_id=body.session_id,
         user_message=body.user_message,
+        line_phone=body.line_phone or "",
         client_phone=body.client_phone or "unknown",
+        direction=body.direction or "inbound",
     )
     row = save_call_log(db, data, response)
     response.call_id = row.id

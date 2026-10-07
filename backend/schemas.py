@@ -1,6 +1,6 @@
 from enum import Enum
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -34,11 +34,27 @@ class Priority(str, Enum):
 
 
 class CallRequest(BaseModel, extra="allow"):
-    """Incoming turn from frontend / telephony (STT text)."""
+    """Одна реплика звонка: вход (звонящий) → выход (агент в CallResponse)."""
 
     session_id: str = Field(..., description="Call / dialog session id")
-    user_message: str = Field(..., min_length=1, max_length=4000, description="Caller utterance (or STT transcript)")
-    client_phone: Optional[str] = Field(default="unknown", description="Caller phone if known")
+    user_message: str = Field(
+        ...,
+        min_length=1,
+        max_length=4000,
+        description="Вход: речь звонящего (или STT)",
+    )
+    line_phone: Optional[str] = Field(
+        default="",
+        description="Номер линии МТС — владелец услуги (чья история)",
+    )
+    client_phone: Optional[str] = Field(
+        default="unknown",
+        description="Номер звонящего (вторая сторона)",
+    )
+    direction: Optional[Literal["inbound", "outbound"]] = Field(
+        default="inbound",
+        description="inbound = входящий на линию, outbound = исходящий",
+    )
     dialog_history: Optional[list[dict[str, str]]] = Field(
         default=None,
         description='Optional prior turns: [{"role":"user"|"assistant","text":"..."}]',
@@ -121,13 +137,18 @@ class SynthesizeResponse(BaseModel):
 
 
 class CallHistoryItem(BaseModel):
-    """Карточка звонка для дашборда Ивана (ТЗ: контроль / история)."""
+    """Карточка звонка: вход/выход + привязка к линии владельца."""
 
     id: int
     session_id: str
-    caller_phone: str
-    user_message: str
-    agent_response: str
+    line_phone: str = Field(default="", description="Номер линии МТС (владелец)")
+    caller_phone: str = Field(description="Номер звонящего")
+    direction: str = Field(default="inbound", description="inbound | outbound")
+    input: str = Field(description="Вход: речь звонящего")
+    output: str = Field(description="Выход: ответ агента")
+    # совместимость со старыми клиентами
+    user_message: str = Field(description="= input")
+    agent_response: str = Field(description="= output")
     summary: str
     is_critical: bool
     priority: str
@@ -210,7 +231,9 @@ class HotlineRequest(BaseModel):
         default="Просьба соединить с человеком",
         min_length=1,
     )
+    line_phone: Optional[str] = ""
     client_phone: Optional[str] = "unknown"
+    direction: Optional[Literal["inbound", "outbound"]] = "inbound"
 
 
 class CallCorrectionIn(BaseModel):

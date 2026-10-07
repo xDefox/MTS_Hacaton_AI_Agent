@@ -36,6 +36,13 @@ def test_defaults_and_update(tmp_path, monkeypatch):
     assert hybrid["template_greeting"] == "Привет!"
     assert hybrid["template_faq"] == "FAQ"
 
+    assert svc.get_settings(phone)["connected"] is False
+    on = svc.update_settings(phone, connected=True)
+    assert on["connected"] is True
+    assert svc.get_settings(phone)["connected"] is True
+    off = svc.update_settings(phone, connected=False)
+    assert off["connected"] is False
+
 
 if __name__ == "__main__":
     from pathlib import Path
