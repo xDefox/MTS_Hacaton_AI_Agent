@@ -36,6 +36,27 @@ async def _transcribe_local(
     return text, f"faster-whisper:{settings.whisper_model_size}"
 
 
+async def _speechkit_or_empty(
+    audio: bytes, audio_format: str, lang: str, sample_rate_hertz: int | None
+) -> str:
+    """Пустой результат SpeechKit — не ошибка сети, а «речи не слышно»."""
+    from backend.services.speechkit_stt import SpeechKitError, transcribe_audio
+
+    try:
+        return (
+            await transcribe_audio(
+                audio,
+                audio_format=audio_format,  # type: ignore[arg-type]
+                lang=lang,
+                sample_rate_hertz=sample_rate_hertz,
+            )
+        ).strip()
+    except SpeechKitError as exc:
+        if "empty transcript" in str(exc).lower():
+            return ""
+        raise
+
+
 async def transcribe_bytes(
     audio: bytes,
     *,
@@ -49,7 +70,6 @@ async def transcribe_bytes(
     provider = (settings.stt_provider or "local").strip().lower()
     if provider == "yandex":
         from backend.services.audio_cleanup import SAMPLE_RATE, clean_for_stt
-        from backend.services.speechkit_stt import transcribe_audio
 
         payload, fmt, rate = audio, audio_format, sample_rate_hertz
         # «Сырой» LPCM без RIFF-заголовка не декодируется — шлём как есть
@@ -59,20 +79,13 @@ async def transcribe_bytes(
                 payload, fmt, rate = cleaned, "lpcm", SAMPLE_RATE
 
         try:
-            text = await transcribe_audio(
-                payload,
-                audio_format=fmt,  # type: ignore[arg-type]
-                lang=lang,
-                sample_rate_hertz=rate,
-            )
-            if not text.strip() and payload is not audio:
+            text = await _speechkit_or_empty(payload, fmt, lang, rate)
+            if not text and payload is not audio:
                 logger.info("Empty transcript after cleanup, retry with original audio")
-                text = await transcribe_audio(
-                    audio,
-                    audio_format=audio_format,  # type: ignore[arg-type]
-                    lang=lang,
-                    sample_rate_hertz=sample_rate_hertz,
-                )
+                text = await _speechkit_or_empty(audio, audio_format, lang, sample_rate_hertz)
+            if not text:
+                # Тишина/шум: Whisper тут не поможет, а его загрузка — десятки секунд
+                logger.info("SpeechKit: no speech recognized, skip local fallback")
             return text, "yandex-speechkit"
         except Exception as exc:  # noqa: BLE001 — нет ключей / сеть → Whisper
             logger.warning("SpeechKit STT failed, fallback to local Whisper: %s", exc)

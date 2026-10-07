@@ -40,14 +40,44 @@ def _normalize(samples: np.ndarray) -> np.ndarray:
     return out
 
 
+def _as_frames(result) -> list:
+    if result is None:
+        return []
+    return result if isinstance(result, list) else [result]
+
+
+def _decode(audio: bytes) -> np.ndarray:
+    """Любой контейнер (ogg/opus, wav, mp3, m4a) → float32 моно 16 кГц.
+
+    Через av напрямую: faster_whisper.decode_audio передаёт аргументы,
+    которых нет в части версий av.
+    """
+    import av
+
+    resampler = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+    chunks: list[np.ndarray] = []
+    with av.open(io.BytesIO(audio), mode="r") as container:
+        stream = container.streams.audio[0]
+        for frame in container.decode(stream):
+            frame.pts = None
+            for out in _as_frames(resampler.resample(frame)):
+                chunks.append(out.to_ndarray().reshape(-1))
+        try:
+            for out in _as_frames(resampler.resample(None)):
+                chunks.append(out.to_ndarray().reshape(-1))
+        except Exception:  # noqa: BLE001 — старые av не умеют flush
+            pass
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(chunks).astype(np.float32) / 32768.0
+
+
 def clean_for_stt(audio: bytes) -> bytes | None:
     """Возвращает LPCM 16 кГц int16 или None, если декодировать не удалось."""
     if not audio:
         return None
     try:
-        from faster_whisper.audio import decode_audio
-
-        samples = decode_audio(io.BytesIO(audio), sampling_rate=SAMPLE_RATE)
+        samples = _decode(audio)
     except Exception as exc:  # noqa: BLE001 — неизвестный контейнер: отправим исходник
         logger.info("Audio cleanup skipped (decode failed): %s", exc)
         return None
