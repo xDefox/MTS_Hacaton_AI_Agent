@@ -845,7 +845,15 @@ def main(page: ft.Page):
     hist_filter = {"critical": False}
     ui_tab = {"name": "dash"}
 
-    effect_banner = ft.Text("", size=12, color=MTS_DARK)
+    effect_banner_text = ft.Text("", size=12, color=MTS_DARK)
+    effect_banner = ft.Container(
+        visible=True,
+        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+        bgcolor="#FFF5F5",
+        border_radius=12,
+        border=ft.Border.all(1, "#F5C6C8"),
+        content=effect_banner_text,
+    )
     history_off_hint = ft.Text(
         "История выключена — раздел недоступен, пока не включите галочку.",
         size=12,
@@ -952,7 +960,7 @@ def main(page: ft.Page):
         return " · ".join(bits)
 
     def _apply_effects():
-        effect_banner.value = _effect_summary()
+        effect_banner_text.value = _effect_summary()
         history_off_hint.visible = not history_check.value
         hist_all_btn.disabled = not history_check.value
         hist_crit_btn.disabled = not history_check.value
@@ -975,6 +983,75 @@ def main(page: ft.Page):
     def _fmt_when(raw) -> str:
         return str(raw or "—").replace("T", " ")[:16]
 
+    def _dash_metric(title: str, value: str, subtitle: str, *, accent: bool = False) -> ft.Container:
+        return ft.Container(
+            expand=True,
+            padding=ft.Padding.all(14),
+            bgcolor=MTS_WHITE,
+            border_radius=16,
+            border=ft.Border.all(1, MTS_RED if accent else "#E8E8EA"),
+            content=ft.Column(
+                [
+                    ft.Text(title, size=12, color=MTS_GRAY),
+                    ft.Text(
+                        value,
+                        size=26,
+                        weight=ft.FontWeight.BOLD,
+                        color=MTS_RED if accent else MTS_DARK,
+                    ),
+                    ft.Text(subtitle, size=12, color=MTS_GRAY),
+                ],
+                spacing=4,
+                tight=True,
+            ),
+        )
+
+    def _dash_bar_row(label: str, count: int, total: int) -> ft.Control:
+        share = (count / total) if total else 0
+        width_frac = max(0.06, min(1.0, share))
+        filled = max(1, int(round(width_frac * 100)))
+        empty = max(1, 100 - filled)
+        return ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Text(label, size=13, color=MTS_DARK, expand=True),
+                        ft.Text(str(count), size=13, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                    ],
+                    spacing=8,
+                ),
+                ft.Container(
+                    height=8,
+                    bgcolor="#EFEFF1",
+                    border_radius=8,
+                    clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                    content=ft.Row(
+                        [
+                            ft.Container(
+                                height=8,
+                                bgcolor=MTS_RED,
+                                border_radius=8,
+                                expand=filled,
+                            ),
+                            ft.Container(expand=empty),
+                        ],
+                        spacing=0,
+                    ),
+                ),
+            ],
+            spacing=4,
+            tight=True,
+        )
+
+    def _dash_chip(label: str, count: int) -> ft.Container:
+        return ft.Container(
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+            bgcolor="#F7F7F8",
+            border_radius=20,
+            border=ft.Border.all(1, "#E8E8EA"),
+            content=ft.Text(f"{label}  {count}", size=12, color=MTS_DARK),
+        )
+
     def _load_dashboard():
         dash_body.controls.clear()
         try:
@@ -986,7 +1063,17 @@ def main(page: ft.Page):
             )
         except httpx.RequestError:
             dash_body.controls.append(
-                ft.Text("API недоступен — запустите uvicorn на :8000", color=MTS_RED, size=13)
+                ft.Container(
+                    padding=ft.Padding.all(16),
+                    bgcolor="#FFF5F5",
+                    border_radius=14,
+                    border=ft.Border.all(1, "#F5C6C8"),
+                    content=ft.Text(
+                        "API недоступен — запустите uvicorn на :8000",
+                        color=MTS_RED,
+                        size=13,
+                    ),
+                )
             )
             return
         if resp.status_code != 200:
@@ -995,42 +1082,91 @@ def main(page: ft.Page):
         s = resp.json()
         total = int(s.get("total") or 0)
         critical = int(s.get("critical") or 0)
-        dash_body.controls.extend(
-            [
-                ft.Text(f"Всего карточек: {total}", size=15, weight=ft.FontWeight.W_600, color=MTS_DARK),
-                ft.Text(
-                    f"Важные: {critical} ({s.get('critical_share') or 0}%) · "
-                    f"Рутина: {int(s.get('routine') or 0)}",
-                    size=13,
-                    color=MTS_GRAY,
-                ),
-            ]
+        routine = int(s.get("routine") or max(0, total - critical))
+        share_raw = float(s.get("critical_share") or 0)
+        # API отдаёт долю 0..1 или уже проценты
+        share_pct = int(round(share_raw * 100)) if share_raw <= 1 else int(round(share_raw))
+
+        dash_body.controls.append(
+            ft.Row(
+                [
+                    _dash_metric("Всего", str(total), "карточек линии"),
+                    _dash_metric("Важные", str(critical), f"{share_pct}% от всех", accent=True),
+                    _dash_metric("Рутина", str(routine), "без эскалации"),
+                ],
+                spacing=10,
+            )
         )
+
         if not total:
             dash_body.controls.append(
-                ft.Text(
-                    "Пока пусто — появится после process_call / process_call_voice.",
-                    size=13,
-                    color=MTS_GRAY,
+                ft.Container(
+                    margin=ft.Margin.only(top=8),
+                    padding=ft.Padding.all(20),
+                    bgcolor=MTS_WHITE,
+                    border_radius=16,
+                    border=ft.Border.all(1, "#E8E8EA"),
+                    content=ft.Column(
+                        [
+                            ft.Text("Пока тихо", size=16, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                            ft.Text(
+                                "После демо-звонка в Telegram здесь появятся счётчики "
+                                "и разбивка по намерениям.",
+                                size=13,
+                                color=MTS_GRAY,
+                            ),
+                        ],
+                        spacing=6,
+                        tight=True,
+                    ),
                 )
             )
             return
+
         intents = s.get("by_intent") or {}
         if intents:
             dash_body.controls.append(
-                ft.Text("По намерениям", size=14, weight=ft.FontWeight.W_600, color=MTS_DARK)
+                ft.Container(
+                    margin=ft.Margin.only(top=4),
+                    padding=ft.Padding.all(14),
+                    bgcolor=MTS_WHITE,
+                    border_radius=16,
+                    border=ft.Border.all(1, "#E8E8EA"),
+                    content=ft.Column(
+                        [
+                            ft.Text("Намерения", size=14, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                            ft.Text("Кто звонил и зачем — по классификации агента", size=12, color=MTS_GRAY),
+                            *[_dash_bar_row(INTENT_RU.get(str(k), str(k)), int(v), total) for k, v in intents.items()],
+                        ],
+                        spacing=10,
+                        tight=True,
+                    ),
+                )
             )
-            for key, count in intents.items():
-                label = INTENT_RU.get(str(key), str(key))
-                dash_body.controls.append(ft.Text(f"· {label} — {count}", size=13, color=MTS_DARK))
+
         actions = s.get("by_action") or {}
         if actions:
+            chips = [
+                _dash_chip(ACTION_RU.get(str(k), str(k)), int(v))
+                for k, v in actions.items()
+            ]
             dash_body.controls.append(
-                ft.Text("Что делать", size=14, weight=ft.FontWeight.W_600, color=MTS_DARK)
+                ft.Container(
+                    padding=ft.Padding.all(14),
+                    bgcolor=MTS_WHITE,
+                    border_radius=16,
+                    border=ft.Border.all(1, "#E8E8EA"),
+                    content=ft.Column(
+                        [
+                            ft.Text("Что делать дальше", size=14, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                            ft.Text("Действия, которые агент рекомендует Ивану", size=12, color=MTS_GRAY),
+                            ft.Row(chips, spacing=8, wrap=True),
+                        ],
+                        spacing=10,
+                        tight=True,
+                    ),
+                )
             )
-            for key, count in actions.items():
-                label = ACTION_RU.get(str(key), str(key))
-                dash_body.controls.append(ft.Text(f"· {label} — {count}", size=13, color=MTS_DARK))
 
     def _show_call_detail(item: dict):
         flag = "⚠️ Важно" if item.get("is_critical") else "Звонок"
@@ -1593,15 +1729,24 @@ def main(page: ft.Page):
         [
             ft.Row(
                 [
-                    ft.Text("Аналитика звонков", size=16, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                    ft.Column(
+                        [
+                            ft.Text("Дашборд линии", size=18, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                            ft.Text("Сводка по вашей линии — без чужих звонков", size=12, color=MTS_GRAY),
+                        ],
+                        spacing=2,
+                        tight=True,
+                        expand=True,
+                    ),
                     refresh_dash_btn,
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.START,
             ),
             effect_banner,
             dash_body,
         ],
-        spacing=10,
+        spacing=12,
         tight=True,
         visible=True,
     )
@@ -1705,14 +1850,21 @@ def main(page: ft.Page):
     )
 
     # вторая ссылка на баннер в дашборде — одна и та же control нельзя в двух местах
-    effect_banner_dash = ft.Text("", size=12, color=MTS_DARK)
+    effect_banner_dash_text = ft.Text("", size=12, color=MTS_DARK)
+    effect_banner_dash = ft.Container(
+        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+        bgcolor="#FFF5F5",
+        border_radius=12,
+        border=ft.Border.all(1, "#F5C6C8"),
+        content=effect_banner_dash_text,
+    )
     dash_section.controls[1] = effect_banner_dash
 
     def _apply_effects_full():
         _sync_template_fields()
         text = _effect_summary()
-        effect_banner.value = text
-        effect_banner_dash.value = text
+        effect_banner_text.value = text
+        effect_banner_dash_text.value = text
         history_off_hint.visible = not history_check.value
         hist_all_btn.disabled = not history_check.value
         hist_crit_btn.disabled = not history_check.value
@@ -1937,7 +2089,8 @@ def main(page: ft.Page):
         "new_scenario_text": new_scenario_text,
         "new_scenario_kind": new_scenario_kind,
         "history_list": history_list,
-        "effect_banner": effect_banner,
+        "effect_banner": effect_banner_text,
+        "effect_banner_box": effect_banner,
     }
 
     page.on_resize = lambda e: apply_responsive(e.width, e.height)

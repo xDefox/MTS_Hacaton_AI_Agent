@@ -154,11 +154,14 @@ def _line_preferences_block(request: CallRequest) -> str:
         if faq and faq != LINE_DEFAULTS["template_faq"].strip():
             lines.append(
                 "Шаблоны владельца этой линии (главнее общих сценариев выше). "
-                "Если вопрос к ним относится — отвечай по ним: факты строго из шаблона, "
-                "формулировка своими словами:\n" + faq
+                "Если вопрос к ним относится — факты строго из шаблона, своими словами. "
+                "Для спама/рекламы/обмана отвечай по тексту сценария отказа, "
+                "не уходи в «расскажите подробнее»:\n" + faq
             )
         if greet:
             lines.append(f"Приветствие линии (уже прозвучало в начале, не повторяй): {greet}")
+    else:
+        lines.append("Шаблоны линии выключены — отвечай общими правилами секретаря.")
     return "\n".join(lines)
 
 
@@ -438,7 +441,8 @@ def _fallback_response(request: CallRequest, reason: str) -> CallResponse:
         next_step = "Просмотреть резюме в Telegram"
 
     return CallResponse(
-        agent_response=ensure_ai_disclosure(agent_response),
+        # Disclosure добавит call_agent.finalize_agent_reply один раз за сессию
+        agent_response=_strip_leading_disclosures(agent_response) or agent_response,
         is_critical=is_critical,
         priority=(
             Priority.critical
@@ -563,7 +567,8 @@ async def process_call_with_yandex(
             parsed = _parse_output(raw)
             caller_name = parsed.caller_name.strip() or None
             response = CallResponse(
-                agent_response=ensure_ai_disclosure(parsed.agent_response),
+                agent_response=_strip_leading_disclosures(parsed.agent_response)
+                or parsed.agent_response,
                 is_critical=parsed.is_critical,
                 priority=parsed.priority,
                 intent=parsed.intent,

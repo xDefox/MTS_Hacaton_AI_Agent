@@ -73,13 +73,23 @@ def call_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+_DISCLOSURE_ONCE = (
+    "Внимание: вы общаетесь с искусственным интеллектом. "
+    "Разговор может записываться для передачи информации владельцу. "
+)
+
+
 def demo_greeting_text(prefs: dict) -> str:
-    """Приветствие для демо-звонка: шаблон линии или дефолт."""
+    """Приветствие для демо-звонка: disclosure один раз + шаблон линии."""
     if prefs.get("scenarios"):
         greet = (prefs.get("template_greeting") or "").strip()
-        if greet:
-            return greet
-    return DEFAULT_GREETING
+    else:
+        greet = ""
+    body = greet or DEFAULT_GREETING
+    lower = body.lower()
+    if "искусственным интеллектом" in lower or "общаетесь с ии" in lower:
+        return body
+    return f"{_DISCLOSURE_ONCE}{body}"
 
 
 def format_call_turn(payload: dict) -> str:
