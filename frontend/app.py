@@ -49,8 +49,21 @@ from .assests import (
     TEMPLATES_TAB_TITLE,
     TEMPLATES_HINT,
     TEMPLATES_USE_LABEL,
-    TEMPLATE_GREETING_LABEL,
-    TEMPLATE_FAQ_LABEL,
+    TEMPLATE_ADD_TITLE,
+    TEMPLATE_NAME_LABEL,
+    TEMPLATE_TEXT_LABEL,
+    TEMPLATE_KIND_LABEL,
+    TEMPLATE_KIND_LABELS,
+    TEMPLATE_ADD_BUTTON,
+    TEMPLATE_DELETE,
+    TEMPLATE_EMPTY,
+    RULES_SECTION_TITLE,
+    RULES_HINT,
+    ROUTING_HINT,
+    ESCALATION_STUB,
+    EDIT_SAVE_TEXT,
+    EDIT_SAVED_TEXT,
+    EDIT_HINT,
     CONNECTED_STATUS,
     DISCONNECT_BUTTON_TEXT,
     OPEN_BUTTON_TEXT,
@@ -676,29 +689,62 @@ def main(page: ft.Page):
     )
 
     scenarios_switch = _square_checkbox(label=TEMPLATES_USE_LABEL, value=True)
-    template_greeting = _mts_text_field(
-        label=TEMPLATE_GREETING_LABEL,
-        multiline=True,
-        min_lines=2,
-        max_lines=4,
-    )
-    template_faq = _mts_text_field(
-        label=TEMPLATE_FAQ_LABEL,
-        multiline=True,
-        min_lines=4,
-        max_lines=8,
-    )
+    scenarios_cache: list[dict] = []
+    scenarios_list = ft.Column(spacing=8, tight=True)
+    scenarios_status = ft.Text("", size=12, color=MTS_GRAY)
     templates_off_hint = ft.Text(
-        "Шаблоны выключены — поля скрыты, агент их не использует.",
+        "Шаблоны выключены — список скрыт, агент их не использует.",
         size=12,
         color=MTS_GRAY,
         visible=False,
     )
+    new_scenario_name = _mts_text_field(label=TEMPLATE_NAME_LABEL)
+    new_scenario_text = _mts_text_field(
+        label=TEMPLATE_TEXT_LABEL,
+        multiline=True,
+        min_lines=2,
+        max_lines=4,
+    )
+    new_scenario_kind = ft.Dropdown(
+        label=TEMPLATE_KIND_LABEL,
+        value="custom",
+        options=[
+            ft.dropdown.Option(key=k, text=v) for k, v in TEMPLATE_KIND_LABELS.items()
+        ],
+        bgcolor=MTS_WHITE,
+        filled=True,
+        fill_color=MTS_WHITE,
+        color=MTS_DARK,
+        border_color=MTS_GRAY,
+        focused_border_color=MTS_RED,
+        label_style=ft.TextStyle(color=MTS_GRAY, size=13),
+        text_style=ft.TextStyle(color=MTS_DARK, size=15),
+    )
+
+    def _templates_from_cache() -> tuple[str, str]:
+        greeting = ""
+        faq_parts: list[str] = []
+        for item in scenarios_cache:
+            if not item.get("enabled", True):
+                continue
+            kind = str(item.get("kind") or "custom")
+            text = str(item.get("text") or "").strip()
+            name = str(item.get("name") or "").strip()
+            if not text:
+                continue
+            if kind == "greeting" and not greeting:
+                greeting = text
+            elif kind == "faq":
+                faq_parts.append(f"{name}: {text}" if name else text)
+            elif kind == "custom":
+                faq_parts.append(f"{name}: {text}" if name else text)
+        return greeting, "\n".join(faq_parts)
 
     def _settings_payload(*, connected: bool | None = None) -> dict:
         routing = routing_dropdown.value or ROUTING_VOICE
         if routing not in ROUTING_LABELS:
             routing = ROUTING_VOICE
+        greeting, faq = _templates_from_cache()
         payload = {
             "phone": connected_phone["value"],
             "connected": bool(service_on["value"]) if connected is None else bool(connected),
@@ -708,8 +754,8 @@ def main(page: ft.Page):
             "hotline": True,
             "notify": "critical" if notify_critical_check.value else "all",
             "mode": "strict" if strict_mode_check.value else "loyal",
-            "template_greeting": (template_greeting.value or "").strip(),
-            "template_faq": (template_faq.value or "").strip(),
+            "template_greeting": greeting,
+            "template_faq": faq,
         }
         return payload
 
@@ -736,10 +782,6 @@ def main(page: ft.Page):
         scenarios_switch.value = bool(data.get("scenarios", True))
         notify_critical_check.value = data.get("notify") == "critical"
         strict_mode_check.value = data.get("mode", "strict") != "loyal"
-        if data.get("template_greeting") is not None:
-            template_greeting.value = str(data.get("template_greeting") or "")
-        if data.get("template_faq") is not None:
-            template_faq.value = str(data.get("template_faq") or "")
 
     def _restore_service_state(phone: str) -> bool:
         """Подтянуть connected/настройки с API; True если услуга уже подключена."""
@@ -817,19 +859,82 @@ def main(page: ft.Page):
     )
     dash_body = ft.Column(spacing=8, tight=True)
     history_list = ft.Column(spacing=8, tight=True)
+    selected_call = {"id": None}
+    detail_meta = ft.Text("", size=13, color=MTS_DARK, selectable=True)
+    escalation_banner = ft.Text(
+        ESCALATION_STUB,
+        size=12,
+        color=MTS_RED,
+        visible=False,
+    )
+    edit_input = _mts_text_field(label="Вход (речь звонящего)", multiline=True, min_lines=2, max_lines=4)
+    edit_output = _mts_text_field(label="Выход (ответ агента)", multiline=True, min_lines=2, max_lines=4)
+    edit_summary = _mts_text_field(label="Резюме для Ивана", multiline=True, min_lines=2, max_lines=3)
+    edit_status = ft.Text("", size=12, color=MTS_GRAY)
+    rules_list = ft.Column(spacing=8, tight=True)
+    rules_status = ft.Text("", size=12, color=MTS_GRAY)
+
+    def _save_call_edit(_=None):
+        cid = selected_call.get("id")
+        phone = connected_phone["value"]
+        if not cid or len(phone) < 10:
+            return
+        try:
+            resp = httpx.patch(
+                f"{API_BASE}/api/v1/calls/{cid}",
+                params={"phone": phone},
+                json={
+                    "user_message": (edit_input.value or "").strip(),
+                    "agent_response": (edit_output.value or "").strip(),
+                    "summary": (edit_summary.value or "").strip(),
+                },
+                timeout=5.0,
+            )
+        except httpx.RequestError:
+            edit_status.value = "API недоступен"
+            edit_status.color = MTS_RED
+            page.update()
+            return
+        if resp.status_code == 200:
+            edit_status.value = EDIT_SAVED_TEXT
+            edit_status.color = MTS_DARK
+            _load_history(critical=hist_filter["critical"])
+        else:
+            edit_status.value = f"Ошибка сохранения ({resp.status_code})"
+            edit_status.color = MTS_RED
+        page.update()
+
+    save_edit_btn = ft.FilledButton(
+        EDIT_SAVE_TEXT,
+        style=ft.ButtonStyle(bgcolor=MTS_RED, color=MTS_WHITE),
+        on_click=_save_call_edit,
+    )
     detail_box = ft.Container(
         visible=False,
         padding=ft.Padding.all(14),
         bgcolor=MTS_WHITE,
         border_radius=16,
         border=ft.Border.all(1, "#E8E8EA"),
-        content=ft.Text("", size=13, color=MTS_DARK, selectable=True),
+        content=ft.Column(
+            [
+                detail_meta,
+                escalation_banner,
+                ft.Text(EDIT_HINT, size=12, color=MTS_GRAY),
+                edit_input,
+                edit_output,
+                edit_summary,
+                ft.Row([save_edit_btn, edit_status], spacing=10),
+            ],
+            spacing=8,
+            tight=True,
+        ),
     )
 
     def _sync_template_fields():
         enabled = bool(scenarios_switch.value)
-        template_greeting.visible = enabled
-        template_faq.visible = enabled
+        scenarios_list.visible = enabled
+        add_scenario_box.visible = enabled
+        scenarios_status.visible = enabled
         templates_off_hint.visible = not enabled
 
     def _effect_summary() -> str:
@@ -929,11 +1034,13 @@ def main(page: ft.Page):
 
     def _show_call_detail(item: dict):
         flag = "⚠️ Важно" if item.get("is_critical") else "Звонок"
-        action = ACTION_RU.get(str(item.get("action_required") or ""), str(item.get("action_required") or "—"))
+        action_key = str(item.get("action_required") or "")
+        action = ACTION_RU.get(action_key, action_key or "—")
         intent = INTENT_RU.get(str(item.get("intent") or ""), str(item.get("intent") or "—"))
         direction = "входящий" if (item.get("direction") or "inbound") == "inbound" else "исходящий"
-        inbound = item.get("input") or item.get("user_message") or "—"
-        outbound = item.get("output") or item.get("agent_response") or "—"
+        inbound = item.get("input") or item.get("user_message") or ""
+        outbound = item.get("output") or item.get("agent_response") or ""
+        selected_call["id"] = item.get("id")
         lines = [
             f"{flag} #{item.get('id')}",
             f"Когда: {_fmt_when(item.get('created_at'))}",
@@ -944,28 +1051,16 @@ def main(page: ft.Page):
             f"Намерение: {intent}",
             f"Приоритет: {PRIORITY_RU.get(str(item.get('priority') or ''), '—')}",
             f"Действие: {action}",
-            "",
-            "Резюме",
-            str(item.get("summary") or "—"),
-            "",
-            "Вход",
-            str(inbound)[:400],
-            "",
-            "Выход",
-            str(outbound)[:400],
         ]
-        if not scenarios_switch.value:
-            lines += ["", "Шаблоны ответов выключены — см. вкладку «Шаблоны»."]
-        elif template_greeting.value or template_faq.value:
-            lines += ["", "Шаблоны линии"]
-            if template_greeting.value:
-                lines += ["Приветствие:", template_greeting.value.strip()[:200]]
-            if template_faq.value:
-                lines += ["FAQ:", template_faq.value.strip()[:300]]
         step = str(item.get("recommended_next_step") or "").strip()
         if step:
-            lines += ["", "Дальше", step]
-        detail_box.content = ft.Text("\n".join(lines), size=13, color=MTS_DARK, selectable=True)
+            lines += [f"Дальше: {step}"]
+        detail_meta.value = "\n".join(lines)
+        escalation_banner.visible = action_key == "transfer_to_human"
+        edit_input.value = str(inbound)
+        edit_output.value = str(outbound)
+        edit_summary.value = str(item.get("summary") or "")
+        edit_status.value = ""
         detail_box.visible = True
 
     def _call_card(item: dict) -> ft.Container:
@@ -1045,6 +1140,101 @@ def main(page: ft.Page):
             color=MTS_WHITE if active else MTS_DARK,
         )
 
+    def _toggle_rule(rule: dict, enabled: bool):
+        body = {
+            "id": rule.get("id"),
+            "name": rule.get("name") or "rule",
+            "description": rule.get("description") or "",
+            "keywords": rule.get("keywords") or [],
+            "is_critical": rule.get("is_critical"),
+            "intent": rule.get("intent"),
+            "action_required": rule.get("action_required"),
+            "enabled": bool(enabled),
+        }
+        try:
+            resp = httpx.put(
+                f"{API_BASE}/api/v1/routing_rules",
+                json=body,
+                timeout=5.0,
+            )
+        except httpx.RequestError:
+            rules_status.value = "API недоступен — правило не сохранено"
+            rules_status.color = MTS_RED
+            _load_rules()
+            page.update()
+            return
+        if resp.status_code == 200:
+            rules_status.value = f"«{body['name']}»: {'вкл' if enabled else 'выкл'}"
+            rules_status.color = MTS_DARK
+        else:
+            rules_status.value = f"Ошибка ({resp.status_code})"
+            rules_status.color = MTS_RED
+            _load_rules()
+        page.update()
+
+    def _load_rules():
+        rules_list.controls.clear()
+        try:
+            resp = httpx.get(f"{API_BASE}/api/v1/routing_rules", timeout=5.0)
+        except httpx.RequestError:
+            rules_list.controls.append(
+                ft.Text("API недоступен — запустите uvicorn на :8000", color=MTS_RED, size=13)
+            )
+            return
+        if resp.status_code != 200:
+            rules_list.controls.append(ft.Text("Правила недоступны", color=MTS_RED, size=13))
+            return
+        items = resp.json().get("items") or []
+        if not items:
+            rules_list.controls.append(ft.Text("Список правил пуст.", size=13, color=MTS_GRAY))
+            return
+        for rule in items:
+            box = _square_checkbox(
+                value=bool(rule.get("enabled", True)),
+                on_change=lambda e, r=rule: _toggle_rule(r, bool(e.control.value)),
+            )
+            action = ACTION_RU.get(str(rule.get("action_required") or ""), str(rule.get("action_required") or "—"))
+            crit = "важно" if rule.get("is_critical") else "рутина"
+            if rule.get("is_critical") is None:
+                crit = "как модель"
+            row = ft.Container(
+                padding=ft.Padding.all(12),
+                bgcolor=MTS_WHITE,
+                border_radius=14,
+                border=ft.Border.all(1, "#E8E8EA"),
+                content=ft.Row(
+                    [
+                        box,
+                        ft.Column(
+                            [
+                                ft.Text(
+                                    str(rule.get("name") or "Правило"),
+                                    size=14,
+                                    weight=ft.FontWeight.W_600,
+                                    color=MTS_DARK,
+                                ),
+                                ft.Text(
+                                    str(rule.get("description") or ""),
+                                    size=12,
+                                    color=MTS_GRAY,
+                                ),
+                                ft.Text(
+                                    f"Действие: {action} · {crit}",
+                                    size=12,
+                                    color=MTS_DARK,
+                                ),
+                            ],
+                            spacing=2,
+                            tight=True,
+                            expand=True,
+                        ),
+                    ],
+                    spacing=10,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+            )
+            rules_list.controls.append(row)
+
     def _show_tab(name: str):
         ui_tab["name"] = name
         dash_section.visible = name == "dash"
@@ -1059,8 +1249,204 @@ def main(page: ft.Page):
             _load_dashboard()
         elif name == "hist":
             _load_history(critical=hist_filter["critical"])
+        elif name == "tpl":
+            _load_scenarios()
+        elif name == "set":
+            _load_rules()
         _apply_effects()
         page.update()
+
+    def _upsert_scenario(body: dict, *, reload: bool = True) -> bool:
+        try:
+            resp = httpx.put(
+                f"{API_BASE}/api/v1/scenarios",
+                json=body,
+                timeout=5.0,
+            )
+        except httpx.RequestError:
+            scenarios_status.value = "API недоступен — шаблон не сохранён"
+            scenarios_status.color = MTS_RED
+            page.update()
+            return False
+        if resp.status_code != 200:
+            scenarios_status.value = f"Ошибка сохранения ({resp.status_code})"
+            scenarios_status.color = MTS_RED
+            page.update()
+            return False
+        scenarios_status.value = "Сохранено"
+        scenarios_status.color = MTS_DARK
+        if reload:
+            _load_scenarios()
+            _push_settings()
+        page.update()
+        return True
+
+    def _toggle_scenario(item: dict, enabled: bool):
+        body = {
+            "id": item.get("id"),
+            "name": item.get("name") or "Шаблон",
+            "kind": item.get("kind") or "custom",
+            "text": item.get("text") or "",
+            "enabled": bool(enabled),
+        }
+        _upsert_scenario(body)
+
+    def _save_scenario_fields(item: dict, name_field: ft.TextField, text_field: ft.TextField):
+        body = {
+            "id": item.get("id"),
+            "name": (name_field.value or "").strip() or "Шаблон",
+            "kind": item.get("kind") or "custom",
+            "text": (text_field.value or "").strip(),
+            "enabled": bool(item.get("enabled", True)),
+        }
+        _upsert_scenario(body)
+
+    def _delete_scenario(item: dict):
+        sid = item.get("id")
+        if not sid:
+            return
+        try:
+            resp = httpx.delete(f"{API_BASE}/api/v1/scenarios/{sid}", timeout=5.0)
+        except httpx.RequestError:
+            scenarios_status.value = "API недоступен — не удалено"
+            scenarios_status.color = MTS_RED
+            page.update()
+            return
+        if resp.status_code == 200:
+            scenarios_status.value = "Удалено"
+            scenarios_status.color = MTS_DARK
+            _load_scenarios()
+            _push_settings()
+        else:
+            scenarios_status.value = f"Ошибка удаления ({resp.status_code})"
+            scenarios_status.color = MTS_RED
+        page.update()
+
+    def _scenario_card(item: dict) -> ft.Container:
+        kind = str(item.get("kind") or "custom")
+        kind_label = TEMPLATE_KIND_LABELS.get(kind, kind)
+        name_field = _mts_text_field(
+            label=TEMPLATE_NAME_LABEL,
+            value=str(item.get("name") or ""),
+        )
+        text_field = _mts_text_field(
+            label=TEMPLATE_TEXT_LABEL,
+            value=str(item.get("text") or ""),
+            multiline=True,
+            min_lines=2,
+            max_lines=4,
+        )
+        name_field.on_blur = lambda e, it=item, nf=name_field, tf=text_field: _save_scenario_fields(
+            it, nf, tf
+        )
+        text_field.on_blur = lambda e, it=item, nf=name_field, tf=text_field: _save_scenario_fields(
+            it, nf, tf
+        )
+        box = _square_checkbox(
+            value=bool(item.get("enabled", True)),
+            on_change=lambda e, it=item: _toggle_scenario(it, bool(e.control.value)),
+        )
+        delete_btn = ft.TextButton(
+            TEMPLATE_DELETE,
+            style=ft.ButtonStyle(color=MTS_RED),
+            on_click=lambda e, it=item: _delete_scenario(it),
+        )
+        return ft.Container(
+            padding=ft.Padding.all(12),
+            bgcolor=MTS_WHITE,
+            border_radius=14,
+            border=ft.Border.all(1, "#E8E8EA"),
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            box,
+                            ft.Text(
+                                kind_label,
+                                size=12,
+                                color=MTS_GRAY,
+                                expand=True,
+                            ),
+                            delete_btn,
+                        ],
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    name_field,
+                    text_field,
+                ],
+                spacing=8,
+                tight=True,
+            ),
+        )
+
+    def _load_scenarios():
+        scenarios_list.controls.clear()
+        scenarios_cache.clear()
+        try:
+            resp = httpx.get(f"{API_BASE}/api/v1/scenarios", timeout=5.0)
+        except httpx.RequestError:
+            scenarios_list.controls.append(
+                ft.Text("API недоступен — запустите uvicorn на :8000", color=MTS_RED, size=13)
+            )
+            return
+        if resp.status_code != 200:
+            scenarios_list.controls.append(ft.Text("Шаблоны недоступны", color=MTS_RED, size=13))
+            return
+        items = resp.json().get("items") or []
+        scenarios_cache.extend(items)
+        if not items:
+            scenarios_list.controls.append(
+                ft.Text(TEMPLATE_EMPTY, size=13, color=MTS_GRAY)
+            )
+            return
+        for item in items:
+            scenarios_list.controls.append(_scenario_card(item))
+
+    def _add_scenario(_=None):
+        name = (new_scenario_name.value or "").strip()
+        text = (new_scenario_text.value or "").strip()
+        if not name or not text:
+            scenarios_status.value = "Укажите название и текст"
+            scenarios_status.color = MTS_RED
+            page.update()
+            return
+        ok = _upsert_scenario(
+            {
+                "name": name,
+                "kind": new_scenario_kind.value or "custom",
+                "text": text,
+                "enabled": True,
+            }
+        )
+        if ok:
+            new_scenario_name.value = ""
+            new_scenario_text.value = ""
+            new_scenario_kind.value = "custom"
+            page.update()
+
+    add_scenario_btn = ft.FilledButton(
+        TEMPLATE_ADD_BUTTON,
+        style=ft.ButtonStyle(bgcolor=MTS_RED, color=MTS_WHITE),
+        on_click=_add_scenario,
+    )
+    add_scenario_box = ft.Container(
+        padding=ft.Padding.all(12),
+        bgcolor=MTS_WHITE,
+        border_radius=14,
+        border=ft.Border.all(1, "#E8E8EA"),
+        content=ft.Column(
+            [
+                ft.Text(TEMPLATE_ADD_TITLE, size=14, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                new_scenario_kind,
+                new_scenario_name,
+                new_scenario_text,
+                add_scenario_btn,
+            ],
+            spacing=8,
+            tight=True,
+        ),
+    )
 
     def _on_routing(_=None):
         _apply_effects()
@@ -1083,8 +1469,6 @@ def main(page: ft.Page):
 
     routing_dropdown.on_change = _on_routing
     scenarios_switch.on_change = _on_templates
-    template_greeting.on_blur = _on_templates
-    template_faq.on_blur = _on_templates
     for box in setting_checks:
         box.on_change = _on_feature
 
@@ -1245,10 +1629,11 @@ def main(page: ft.Page):
             ft.Text(TEMPLATES_HINT, size=13, color=MTS_GRAY),
             scenarios_switch,
             templates_off_hint,
-            template_greeting,
-            template_faq,
+            scenarios_status,
+            scenarios_list,
+            add_scenario_box,
             ft.Text(
-                "Изменения сохраняются при выходе из поля или переключении шаблонов.",
+                "Правки сохраняются при выходе из поля; для бота подтягиваются приветствие и FAQ.",
                 size=12,
                 color=MTS_GRAY,
             ),
@@ -1258,17 +1643,33 @@ def main(page: ft.Page):
         visible=False,
     )
 
+    routing_hint = ft.Text(ROUTING_HINT, size=12, color=MTS_GRAY)
+    rules_block = ft.Column(
+        [
+            ft.Text(RULES_SECTION_TITLE, size=14, weight=ft.FontWeight.W_600, color=MTS_DARK),
+            ft.Text(RULES_HINT, size=12, color=MTS_GRAY),
+            rules_status,
+            rules_list,
+        ],
+        spacing=8,
+        tight=True,
+    )
+
     set_section = ft.Column(
         [
+            ft.Text("Настройки линии", size=16, weight=ft.FontWeight.W_600, color=MTS_DARK),
             routing_dropdown,
+            routing_hint,
             ft.Text(FEATURES_TITLE, size=14, weight=ft.FontWeight.W_600, color=MTS_DARK),
             *setting_rows,
             effect_banner,
             ft.Text(
-                "Настройки сразу меняют разделы приложения и сохраняются для бота.",
+                "Изменения сразу влияют на приложение и бота.",
                 size=12,
                 color=MTS_GRAY,
             ),
+            ft.Divider(height=1, color="#E8E8EA"),
+            rules_block,
             ft.Divider(height=1, color="#E8E8EA"),
             ft.Container(
                 padding=ft.Padding.symmetric(horizontal=16, vertical=14),
@@ -1340,7 +1741,11 @@ def main(page: ft.Page):
         content=ft.Column(
             [
                 ft.Text(SERVICE_NAME, size=20, weight=ft.FontWeight.BOLD, color=MTS_DARK),
-                ft.Row([tab_dash, tab_hist, tab_tpl, tab_set], spacing=8, wrap=True),
+                ft.Row(
+                    [tab_dash, tab_hist, tab_tpl, tab_set],
+                    spacing=8,
+                    wrap=True,
+                ),
                 dash_section,
                 hist_section,
                 tpl_section,
@@ -1514,9 +1919,23 @@ def main(page: ft.Page):
         "dash_section": dash_section,
         "hist_section": hist_section,
         "tpl_section": tpl_section,
+        "rules_block": rules_block,
         "set_section": set_section,
+        "rules_list": rules_list,
+        "rules_status": rules_status,
+        "save_edit_btn": save_edit_btn,
+        "detail_box": detail_box,
+        "escalation_banner": escalation_banner,
+        "routing_hint": routing_hint,
         "routing_dropdown": routing_dropdown,
         "scenarios_switch": scenarios_switch,
+        "scenarios_list": scenarios_list,
+        "scenarios_status": scenarios_status,
+        "add_scenario_box": add_scenario_box,
+        "add_scenario_btn": add_scenario_btn,
+        "new_scenario_name": new_scenario_name,
+        "new_scenario_text": new_scenario_text,
+        "new_scenario_kind": new_scenario_kind,
         "history_list": history_list,
         "effect_banner": effect_banner,
     }

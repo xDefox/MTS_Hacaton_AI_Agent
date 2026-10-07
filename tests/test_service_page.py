@@ -16,16 +16,25 @@ from frontend.assests import (
     AVAILABLE_TITLE,
     CATALOG_TITLE,
     CONNECTED_SECTION_TITLE,
+    EDIT_SAVE_TEXT,
+    ESCALATION_STUB,
     EXTRA_SERVICE_NAME,
     HEADER_CONNECT_SUBTITLE,
     LOGIN_TITLE,
     OPEN_BUTTON_TEXT,
+    ROUTING_HINT,
+    RULES_SECTION_TITLE,
     SERVICE_NAME,
     TELEGRAM_OPEN_TEXT,
+    TEMPLATE_ADD_BUTTON,
+    TEMPLATE_EMPTY,
 )
 
 # In-memory настройки услуги — без реального uvicorn
 _FAKE_SETTINGS: dict[str, dict] = {}
+_FAKE_RULES: list[dict] = []
+_FAKE_SCENARIOS: list[dict] = []
+_FAKE_PATCHES: list[dict] = []
 
 
 class _FakeResp:
@@ -35,6 +44,50 @@ class _FakeResp:
 
     def json(self):
         return self._payload
+
+
+def _default_rules() -> list[dict]:
+    return [
+        {
+            "id": "rule-human",
+            "name": "Человек",
+            "description": "Просьба соединить с менеджером",
+            "keywords": ["человека", "менеджер"],
+            "is_critical": True,
+            "intent": "request_human",
+            "action_required": "transfer_to_human",
+            "enabled": True,
+        },
+        {
+            "id": "rule-spam",
+            "name": "Спам",
+            "description": "Реклама / не по делу",
+            "keywords": ["реклама"],
+            "is_critical": False,
+            "intent": "spam",
+            "action_required": "ignore",
+            "enabled": True,
+        },
+    ]
+
+
+def _default_scenarios() -> list[dict]:
+    return [
+        {
+            "id": "sc-greeting",
+            "name": "Приветствие",
+            "kind": "greeting",
+            "text": "Здравствуйте!",
+            "enabled": True,
+        },
+        {
+            "id": "sc-faq",
+            "name": "Часы",
+            "kind": "faq",
+            "text": "С 10 до 19",
+            "enabled": True,
+        },
+    ]
 
 
 def _fake_httpx_get(url, params=None, timeout=None, **kwargs):
@@ -47,6 +100,22 @@ def _fake_httpx_get(url, params=None, timeout=None, **kwargs):
         return _FakeResp(200, row)
     if path.endswith("/telegram/status"):
         return _FakeResp(200, {"activated": False})
+    if path.endswith("/routing_rules"):
+        return _FakeResp(200, {"items": list(_FAKE_RULES)})
+    if path.endswith("/scenarios"):
+        return _FakeResp(200, {"items": list(_FAKE_SCENARIOS), "total": len(_FAKE_SCENARIOS)})
+    if path.endswith("/calls/stats") or path.endswith("/stats"):
+        return _FakeResp(
+            200,
+            {
+                "total": 0,
+                "critical": 0,
+                "routine": 0,
+                "critical_share": 0,
+                "by_intent": {},
+                "by_action": {},
+            },
+        )
     if "/calls" in path:
         return _FakeResp(200, {"items": [], "total": 0, "total_calls": 0})
     return _FakeResp(200, {})
@@ -66,11 +135,79 @@ def _fake_httpx_post(url, json=None, params=None, timeout=None, **kwargs):
     return _FakeResp(200, {"ok": True})
 
 
+def _fake_httpx_put(url, json=None, params=None, timeout=None, **kwargs):
+    path = urlparse(str(url)).path
+    body = json or {}
+    if path.endswith("/routing_rules"):
+        rid = body.get("id")
+        for i, rule in enumerate(_FAKE_RULES):
+            if rule.get("id") == rid:
+                _FAKE_RULES[i] = {**rule, **body}
+                return _FakeResp(200, _FAKE_RULES[i])
+        _FAKE_RULES.append(dict(body))
+        return _FakeResp(200, body)
+    if path.endswith("/scenarios"):
+        sid = body.get("id") or f"sc-new-{len(_FAKE_SCENARIOS)+1}"
+        row = {
+            "id": sid,
+            "name": body.get("name") or "Шаблон",
+            "kind": body.get("kind") or "custom",
+            "text": body.get("text") or "",
+            "enabled": bool(body.get("enabled", True)),
+        }
+        for i, item in enumerate(_FAKE_SCENARIOS):
+            if item.get("id") == sid:
+                _FAKE_SCENARIOS[i] = row
+                return _FakeResp(200, row)
+        _FAKE_SCENARIOS.append(row)
+        return _FakeResp(200, row)
+    return _FakeResp(200, body or {"ok": True})
+
+
+def _fake_httpx_patch(url, json=None, params=None, timeout=None, **kwargs):
+    path = urlparse(str(url)).path
+    body = json or {}
+    if "/calls/" in path:
+        _FAKE_PATCHES.append({"path": path, "params": params or {}, "json": body})
+        return _FakeResp(
+            200,
+            {
+                "id": int(path.rstrip("/").split("/")[-1]),
+                "input": body.get("user_message") or "",
+                "output": body.get("agent_response") or "",
+                "summary": body.get("summary") or "",
+                "user_message": body.get("user_message") or "",
+                "agent_response": body.get("agent_response") or "",
+            },
+        )
+    return _FakeResp(200, body or {"ok": True})
+
+
+def _fake_httpx_delete(url, params=None, timeout=None, **kwargs):
+    path = urlparse(str(url)).path
+    if "/scenarios/" in path:
+        sid = path.rstrip("/").split("/")[-1]
+        before = len(_FAKE_SCENARIOS)
+        _FAKE_SCENARIOS[:] = [s for s in _FAKE_SCENARIOS if s.get("id") != sid]
+        if len(_FAKE_SCENARIOS) == before:
+            return _FakeResp(404, {"detail": "not found"})
+        return _FakeResp(200, {"deleted": True, "id": sid})
+    return _FakeResp(200, {"ok": True})
+
+
 @pytest.fixture(autouse=True)
 def _isolate_api(monkeypatch):
     _FAKE_SETTINGS.clear()
+    _FAKE_RULES.clear()
+    _FAKE_RULES.extend(_default_rules())
+    _FAKE_SCENARIOS.clear()
+    _FAKE_SCENARIOS.extend(_default_scenarios())
+    _FAKE_PATCHES.clear()
     monkeypatch.setattr(httpx, "get", _fake_httpx_get)
     monkeypatch.setattr(httpx, "post", _fake_httpx_post)
+    monkeypatch.setattr(httpx, "put", _fake_httpx_put)
+    monkeypatch.setattr(httpx, "patch", _fake_httpx_patch)
+    monkeypatch.setattr(httpx, "delete", _fake_httpx_delete)
 
 
 class _Window:
@@ -259,6 +396,7 @@ def test_telegram_option_only_after_connect():
     assert not ui["set_section"].visible
     ui["tab_set"].on_click(None)
     assert ui["set_section"].visible
+    assert ROUTING_HINT in (ui["routing_hint"].value or "")
     assert ui["setting_checks"], "должны быть чекбоксы настроек"
     assert all(isinstance(c, ft.Checkbox) for c in ui["setting_checks"])
     assert ui["tg_open_btn"] in _flatten(ui["features_panel"])
@@ -335,6 +473,82 @@ def test_service_persists_for_same_phone_on_relogin():
     assert ui2["connected_card"].visible, "услуга должна восстановиться из настроек"
     assert not ui2["service_card"].visible
     assert not ui2["connected_empty"].visible
+
+
+def test_templates_tab_can_add_scenario():
+    """Вкладка Шаблоны: список сценариев + добавление нового."""
+    page = _page()
+    ui = _enter_mts(page)
+    ui["consent"].value = True
+    ui["consent"].on_change(SimpleNamespace(control=ui["consent"]))
+    ui["connect_btn"].on_click(None)
+
+    ui["tab_tpl"].on_click(None)
+    assert ui["tpl_section"].visible
+    assert ui["add_scenario_box"].visible
+    assert ui["add_scenario_btn"].content == TEMPLATE_ADD_BUTTON
+    listed = " ".join(
+        getattr(c, "value", "") or ""
+        for c in _flatten(ui["scenarios_list"])
+        if isinstance(c, ft.Text) or isinstance(c, ft.TextField)
+    )
+    assert "Приветствие" in listed or "Здравствуйте" in listed
+    assert TEMPLATE_EMPTY not in listed
+
+    before = len(_FAKE_SCENARIOS)
+    ui["new_scenario_name"].value = "Пилот"
+    ui["new_scenario_text"].value = "Расскажите про сроки пилота"
+    ui["new_scenario_kind"].value = "custom"
+    ui["add_scenario_btn"].on_click(None)
+    assert len(_FAKE_SCENARIOS) == before + 1
+    assert any(s.get("name") == "Пилот" for s in _FAKE_SCENARIOS)
+    assert "Сохранено" in (ui["scenarios_status"].value or "")
+
+    ui["scenarios_switch"].value = False
+    ui["scenarios_switch"].on_change(None)
+    assert not ui["add_scenario_box"].visible
+    assert not ui["scenarios_list"].visible
+
+
+def test_rules_in_settings_and_call_edit_ui():
+    """Правила внутри Настроек + правка карточки / заглушка эскалации."""
+    page = _page()
+    ui = _enter_mts(page)
+    ui["consent"].value = True
+    ui["consent"].on_change(SimpleNamespace(control=ui["consent"]))
+    ui["connect_btn"].on_click(None)
+
+    assert "tab_rules" not in ui, "отдельной вкладки Правила больше нет"
+    ui["tab_set"].on_click(None)
+    assert ui["set_section"].visible
+    assert not ui["dash_section"].visible
+    assert ui["rules_block"] in _flatten(ui["set_section"])
+    section_text = " ".join(
+        getattr(c, "value", "") or ""
+        for c in _flatten(ui["set_section"])
+        if isinstance(c, ft.Text)
+    )
+    assert RULES_SECTION_TITLE in section_text
+    assert "Человек" in section_text
+    assert "Спам" in section_text
+    assert ROUTING_HINT in section_text
+
+    boxes = [c for c in _flatten(ui["rules_list"]) if isinstance(c, ft.Checkbox)]
+    assert len(boxes) >= 2, "должны быть переключатели правил"
+    boxes[0].value = False
+    boxes[0].on_change(SimpleNamespace(control=boxes[0]))
+    assert any(not r.get("enabled", True) for r in _FAKE_RULES), "PUT должен сменить enabled"
+    assert "выкл" in (ui["rules_status"].value or "")
+
+    ui["tab_hist"].on_click(None)
+    assert ui["hist_section"].visible
+    assert ui["save_edit_btn"].content == EDIT_SAVE_TEXT
+    assert not ui["detail_box"].visible
+    assert ESCALATION_STUB in (ui["escalation_banner"].value or "")
+    assert not ui["escalation_banner"].visible
+    before = len(_FAKE_PATCHES)
+    ui["save_edit_btn"].on_click(None)
+    assert len(_FAKE_PATCHES) == before, "без выбранного звонка PATCH не шлём"
 
 
 def _flatten(control):
