@@ -49,12 +49,26 @@ from backend.services.tts_storage import (
     find_call_audio,
     save_call_audio,
 )
-from backend.services.yandex_llm import ensure_ai_disclosure
+from backend.services.yandex_llm import _strip_leading_disclosures, ensure_ai_disclosure
 from backend.config import get_settings
+from backend.services.warmup import warmup_demo_stack
 from backend.services.access_audit import list_access_audit, log_access
 
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
+
+
+def _text_for_tts(agent_response: str) -> str:
+    """Без длинного disclosure — иначе pyttsx3 минутами «думает»."""
+    settings = get_settings()
+    limit = max(80, int(settings.tts_max_chars))
+    spoken = _strip_leading_disclosures(agent_response).strip()
+    if not spoken:
+        spoken = "Здравствуйте! Чем могу помочь?"
+    if len(spoken) <= limit:
+        return spoken
+    cut = spoken[:limit].rsplit(" ", 1)[0].strip()
+    return (cut or spoken[:limit]).rstrip(".,;") + "."
 
 
 async def _attach_agent_tts(response: CallResponse) -> CallResponse:
@@ -62,7 +76,7 @@ async def _attach_agent_tts(response: CallResponse) -> CallResponse:
     if response.call_id is None or not response.agent_response.strip():
         return response
     try:
-        audio, ext, engine = await synthesize_agent_audio(response.agent_response)
+        audio, ext, engine = await synthesize_agent_audio(_text_for_tts(response.agent_response))
         save_call_audio(response.call_id, audio, ext=ext)
         response.audio_url = audio_url_for_call(response.call_id)
         response.tts_engine = engine
@@ -113,6 +127,7 @@ async def transcribe(
             lang=lang,
             audio_format=fmt,
             sample_rate_hertz=sample_rate_hertz,
+            filename=audio.filename,
         )
     except SpeechError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -144,6 +159,12 @@ async def synthesize(body: SynthesizeRequest) -> SynthesizeResponse:
     )
 
 
+@router.post("/warmup")
+async def warmup_stack() -> dict:
+    """Прогреть Whisper + Ollama перед демо (иначе первый голосовой запрос очень долгий)."""
+    return await warmup_demo_stack(get_settings())
+
+
 @router.get("/tts/{filename}")
 def get_synth_file(filename: str) -> FileResponse:
     """Скачать демо-файл TTS из data/tts/."""
@@ -166,7 +187,10 @@ async def process_call_voice(
     lang: str = Form("ru-RU"),
     audio_format: Optional[Literal["oggopus", "lpcm"]] = Form(None),
     sample_rate_hertz: Optional[int] = Form(None),
-    with_audio: bool = Form(True),
+    with_audio: bool = Form(
+        False,
+        description="Озвучка ответа (pyttsx3 медленная). Для демо лучше false + отдельно /synthesize",
+    ),
     db: Session = Depends(get_db),
 ) -> VoiceCallResponse:
     """Голос → Whisper STT → локальный LLM → (опц.) TTS → история."""
@@ -178,13 +202,21 @@ async def process_call_voice(
             lang=lang,
             audio_format=fmt,
             sample_rate_hertz=sample_rate_hertz,
+            filename=audio.filename,
         )
     except SpeechError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    user_text = (transcript or "").strip()
+    if not user_text:
+        user_text = (
+            "На линии только шум или тишина, разборчивой речи не слышно. "
+            "Попроси перефразировать и назвать цель звонка."
+        )
+
     data = CallRequest(
         session_id=session_id,
-        user_message=transcript,
+        user_message=user_text,
         client_phone=client_phone or "unknown",
     )
     try:

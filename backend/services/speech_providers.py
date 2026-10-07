@@ -20,6 +20,7 @@ async def transcribe_bytes(
     lang: str = "ru-RU",
     audio_format: str = "oggopus",
     sample_rate_hertz: int | None = None,
+    filename: str | None = None,
 ) -> tuple[str, str]:
     """Returns (transcript, engine_name)."""
     settings = get_settings()
@@ -42,7 +43,12 @@ async def transcribe_bytes(
 
     language = "ru" if lang.lower().startswith("ru") else lang.split("-")[0]
     try:
-        text = await asyncio.to_thread(transcribe_audio_local, audio, language=language)
+        text = await asyncio.to_thread(
+            transcribe_audio_local,
+            audio,
+            language=language,
+            filename=filename,
+        )
     except LocalSTTError as exc:
         raise SpeechError(str(exc)) from exc
     return text, f"faster-whisper:{settings.whisper_model_size}"
@@ -65,8 +71,14 @@ async def synthesize_agent_audio(text: str) -> tuple[bytes, str, str]:
 
     from backend.services.local_tts import LocalTTSError, synthesize_wav_local
 
+    timeout = max(5.0, float(get_settings().tts_timeout_sec))
     try:
-        audio = await asyncio.to_thread(synthesize_wav_local, text)
+        audio = await asyncio.wait_for(
+            asyncio.to_thread(synthesize_wav_local, text),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError as exc:
+        raise SpeechError(f"Local TTS timeout after {timeout:.0f}s") from exc
     except LocalTTSError as exc:
         raise SpeechError(str(exc)) from exc
     return audio, "wav", "pyttsx3-local"

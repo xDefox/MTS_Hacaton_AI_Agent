@@ -33,8 +33,18 @@ app.include_router(call_router)
 
 
 @app.on_event("startup")
-def on_startup() -> None:
+async def on_startup() -> None:
     init_db()
+    settings = get_settings()
+    if settings.warmup_on_startup:
+        from backend.services.warmup import warmup_demo_stack
+
+        # Блокируем «ready» до прогрева — иначе Swagger ловит холодный Whisper/Ollama.
+        status = await warmup_demo_stack(settings)
+        app.state.warmup_status = status
+        logging.getLogger(__name__).info("Startup warmup: %s", status)
+    else:
+        app.state.warmup_status = {"skipped": "warmup_on_startup=false"}
 
 
 from backend.services.readiness import build_readiness, check_ollama
@@ -44,9 +54,11 @@ from backend.services.readiness import build_readiness, check_ollama
 def health_check():
     settings = get_settings()
     db_hint = settings.database_url.split("///")[-1] if "///" in settings.database_url else "configured"
+    warmup = getattr(app.state, "warmup_status", None)
     return {
         "status": "ok",
         "message": "API is running",
+        "warmup": warmup,
         "version": app.version,
         "llm_provider": settings.llm_provider,
         "stt_provider": settings.stt_provider,
