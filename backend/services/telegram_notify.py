@@ -20,8 +20,10 @@ logger = logging.getLogger(__name__)
 
 SUBSCRIBERS_PATH = ROOT_DIR / "data" / "tg_chats.txt"
 LINES_PATH = ROOT_DIR / "data" / "tg_lines.json"
+SETTINGS_PATH = ROOT_DIR / "data" / "tg_settings.json"
 TELEGRAM_API = "https://api.telegram.org"
 _lock = Lock()
+_DEFAULT_PREFS = {"notify": "all", "mode": "strict"}
 
 
 def normalize_phone(raw: str) -> str:
@@ -76,12 +78,23 @@ def activate_line(phone: str, chat_id: int) -> str:
     if not phone:
         raise ValueError("empty phone")
     chat_id = int(chat_id)
+    now = time.time()
     with _lock:
         data = _load_lines()
+        # Один chat_id → одна активная линия (иначе настройки читаются с чужого номера).
+        for other, row in data.items():
+            if other == phone:
+                continue
+            if row.get("chat_id") == chat_id:
+                row = dict(row)
+                row["activated"] = False
+                row["chat_id"] = None
+                row["updated_at"] = now
+                data[other] = row
         data[phone] = {
             "chat_id": chat_id,
             "activated": True,
-            "updated_at": time.time(),
+            "updated_at": now,
         }
         _save_lines(data)
     add_subscriber(chat_id)
@@ -118,12 +131,23 @@ def line_status(phone: str) -> dict:
 
 
 def phone_for_chat(chat_id: int) -> str:
+    """Актуальный номер линии для чата: активированные, затем самые свежие."""
     chat_id = int(chat_id)
     with _lock:
-        for phone, row in _load_lines().items():
-            if row.get("chat_id") == chat_id:
-                return phone
-    return ""
+        matches = [
+            (phone, row)
+            for phone, row in _load_lines().items()
+            if row.get("chat_id") == chat_id
+        ]
+    if not matches:
+        return ""
+    matches.sort(
+        key=lambda item: (
+            1 if item[1].get("activated") else 0,
+            float(item[1].get("updated_at") or 0),
+        )
+    )
+    return matches[-1][0]
 
 
 def last_pending_phone() -> str:
@@ -170,6 +194,42 @@ def list_subscribers() -> list[int]:
             if cid is not None:
                 ids.add(int(cid))
     return sorted(ids)
+
+
+def _load_prefs() -> dict:
+    if not SETTINGS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8") or "{}")
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def get_chat_prefs(chat_id: int) -> dict:
+    with _lock:
+        row = _load_prefs().get(str(int(chat_id))) or {}
+    out = dict(_DEFAULT_PREFS)
+    out.update({k: v for k, v in row.items() if k in _DEFAULT_PREFS})
+    return out
+
+
+def set_chat_prefs(chat_id: int, **kwargs) -> dict:
+    chat_key = str(int(chat_id))
+    with _lock:
+        data = _load_prefs()
+        row = dict(_DEFAULT_PREFS)
+        row.update(data.get(chat_key) or {})
+        for key, value in kwargs.items():
+            if key in _DEFAULT_PREFS and value is not None:
+                row[key] = value
+        data[chat_key] = row
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_PATH.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return row
 
 
 def format_call_report(
@@ -236,6 +296,13 @@ async def notify_call_report(
     )
     url = f"{TELEGRAM_API}/bot{token}/sendMessage"
     async with httpx.AsyncClient(timeout=20.0) as client:
+        # Пуши фильтруем по настройкам линии (фронт), а не по chat_id бота
+        from backend.services.service_settings import get_settings as get_line_settings
+
+        line = get_line_settings(phone)
+        if line.get("notify") == "critical" and not is_critical:
+            logger.info("Telegram skip: линия %s — только важные", phone)
+            return
         for chat_id in chats:
             resp = await client.post(
                 url,

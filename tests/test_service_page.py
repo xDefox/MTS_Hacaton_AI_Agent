@@ -204,12 +204,28 @@ def test_telegram_option_only_after_connect():
     assert ui["features_panel"].visible
     assert not ui["catalog"].visible
     assert ui["back_btn"].visible
+    assert ui["dash_section"].visible, "после подключения открывается дашборд"
+    assert not ui["set_section"].visible
+    ui["tab_set"].on_click(None)
+    assert ui["set_section"].visible
     assert ui["setting_checks"], "должны быть чекбоксы настроек"
     assert all(isinstance(c, ft.Checkbox) for c in ui["setting_checks"])
     assert ui["tg_open_btn"] in _flatten(ui["features_panel"])
     assert ui["tg_open_btn"].content == TELEGRAM_OPEN_TEXT
     assert ui["tg_active"].value is False
     assert not getattr(ui["tg_open_btn"], "url", None), "url на кнопке открывает Telegram второй раз"
+
+    ui["history_check"].value = False
+    ui["history_check"].on_change(None)
+    assert "История: выкл" in (ui["effect_banner"].value or "")
+    ui["tab_hist"].on_click(None)
+    assert ui["hist_section"].visible
+    hist_text = " ".join(
+        getattr(c, "value", "") or ""
+        for c in _flatten(ui["history_list"])
+        if isinstance(c, ft.Text)
+    )
+    assert "выключена" in hist_text.lower()
 
     ui["tg_open_btn"].on_click(None)
     assert page.launched

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.models import CallLog
-from backend.schemas import CallHistoryItem, CallRequest, CallResponse
+from backend.schemas import CallHistoryItem, CallRequest, CallResponse, CallStats
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,25 @@ def list_call_logs(db: Session, *, critical_only: bool = False, limit: int = 100
 
 def get_call_log(db: Session, call_id: int) -> CallLog | None:
     return db.get(CallLog, call_id)
+
+
+def summarize_call_logs(db: Session, *, limit: int = 500) -> CallStats:
+    rows = list_call_logs(db, critical_only=False, limit=limit)
+    total = len(rows)
+    critical = sum(1 for row in rows if row.is_critical)
+    intents = Counter(row.intent or "other" for row in rows)
+    actions = Counter(row.action_required or "continue_dialog" for row in rows)
+    priorities = Counter(row.priority or "normal" for row in rows)
+    share = round(100.0 * critical / total, 1) if total else 0.0
+    return CallStats(
+        total=total,
+        critical=critical,
+        routine=total - critical,
+        critical_share=share,
+        by_intent=dict(intents.most_common()),
+        by_action=dict(actions.most_common()),
+        by_priority=dict(priorities.most_common()),
+    )
 
 
 def call_log_to_item(row: CallLog) -> CallHistoryItem:

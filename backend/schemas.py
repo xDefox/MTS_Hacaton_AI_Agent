@@ -144,6 +144,18 @@ class CallHistoryList(BaseModel):
     total: int
 
 
+class CallStats(BaseModel):
+    """Сводка для дашборда Ивана (бот / UI)."""
+
+    total: int
+    critical: int
+    routine: int
+    critical_share: float
+    by_intent: dict[str, int]
+    by_action: dict[str, int]
+    by_priority: dict[str, int]
+
+
 class TranscribeResponse(BaseModel):
     """Результат SpeechKit STT."""
 

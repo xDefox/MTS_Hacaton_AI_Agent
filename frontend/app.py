@@ -15,6 +15,7 @@ import httpx
 
 from backend.services.telegram_notify import format_phone, normalize_phone
 
+from .tg_dashboard import ACTION_RU, INTENT_RU, PRIORITY_RU
 from .assests import (
     MTS_RED,
     MTS_RED_DARK,
@@ -41,8 +42,15 @@ from .assests import (
     FEATURES_TITLE,
     FEATURES,
     ROUTING_TITLE,
-    ROUTING_VOICE_LABEL,
-    ROUTING_CHAT_LABEL,
+    ROUTING_LABELS,
+    ROUTING_VOICE,
+    ROUTING_CHAT,
+    ROUTING_HYBRID,
+    TEMPLATES_TAB_TITLE,
+    TEMPLATES_HINT,
+    TEMPLATES_USE_LABEL,
+    TEMPLATE_GREETING_LABEL,
+    TEMPLATE_FAQ_LABEL,
     CONNECTED_STATUS,
     DISCONNECT_BUTTON_TEXT,
     OPEN_BUTTON_TEXT,
@@ -218,13 +226,15 @@ def main(page: ft.Page):
         catalog.visible = False
         features_panel.visible = True
         back_btn.visible = True
+        _load_settings()
         if reset_tg:
             tg_on["value"] = False
             tg_on["stop"] = False
             tg_active.value = False
             tg_status_text.value = f"Ожидает /start · {format_phone(phone)}"
             tg_status_text.color = MTS_GRAY
-        page.update()
+        _push_settings()
+        _show_tab("dash")
 
     def go_catalog(_=None):
         """Стрелка назад: услуга остаётся подключённой."""
@@ -232,8 +242,7 @@ def main(page: ft.Page):
 
     def disconnect_service(_=None):
         """Снять услугу: вернуть карточку в «Доступные»."""
-        tg_on["stop"] = True
-        tg_on["polling"] = False
+        _stop_tg_poll()
         tg_on["value"] = False
         tg_active.value = False
         tg_status_text.value = "После /start в боте здесь загорится «Активировано»"
@@ -620,33 +629,376 @@ def main(page: ft.Page):
         setting_checks.append(box)
         setting_rows.append(row)
 
-    voice_check, voice_row = _setting_check(
-        ROUTING_VOICE_LABEL,
-        "ИИ отвечает голосом на входящий звонок",
-        value=True,
-    )
-    chat_check, chat_row = _setting_check(
-        ROUTING_CHAT_LABEL,
-        "Переводить разговор в чат вместо голоса",
-        value=False,
+    history_check = setting_checks[0]
+    notify_critical_check = setting_checks[1]
+    strict_mode_check = setting_checks[2]
+
+    routing_dropdown = ft.Dropdown(
+        label=ROUTING_TITLE,
+        value=ROUTING_VOICE,
+        options=[
+            ft.dropdown.Option(key=key, text=label)
+            for key, label in ROUTING_LABELS.items()
+        ],
+        width=min(320, 280),
+        border_color=MTS_GRAY,
+        focused_border_color=MTS_RED,
     )
 
-    def _on_voice(e):
-        if voice_check.value:
-            chat_check.value = False
-        elif not chat_check.value:
-            voice_check.value = True
+    scenarios_switch = _square_checkbox(label=TEMPLATES_USE_LABEL, value=True)
+    template_greeting = ft.TextField(
+        label=TEMPLATE_GREETING_LABEL,
+        multiline=True,
+        min_lines=2,
+        max_lines=4,
+        border_color=MTS_GRAY,
+        focused_border_color=MTS_RED,
+    )
+    template_faq = ft.TextField(
+        label=TEMPLATE_FAQ_LABEL,
+        multiline=True,
+        min_lines=4,
+        max_lines=8,
+        border_color=MTS_GRAY,
+        focused_border_color=MTS_RED,
+    )
+    templates_off_hint = ft.Text(
+        "Шаблоны выключены — агент не использует текст ниже.",
+        size=12,
+        color=MTS_GRAY,
+        visible=False,
+    )
+
+    def _settings_payload() -> dict:
+        routing = routing_dropdown.value or ROUTING_VOICE
+        if routing not in ROUTING_LABELS:
+            routing = ROUTING_VOICE
+        return {
+            "phone": connected_phone["value"],
+            "routing": routing,
+            "history": bool(history_check.value),
+            "scenarios": bool(scenarios_switch.value),
+            "hotline": True,
+            "notify": "critical" if notify_critical_check.value else "all",
+            "mode": "strict" if strict_mode_check.value else "loyal",
+            "template_greeting": (template_greeting.value or "").strip(),
+            "template_faq": (template_faq.value or "").strip(),
+        }
+
+    def _push_settings(_=None):
+        """Фронт — источник правды; бот только читает (даже без /start)."""
+        phone = connected_phone["value"]
+        if len(phone) < 10:
+            return
+        try:
+            httpx.post(
+                f"{API_BASE}/api/v1/service/settings",
+                json=_settings_payload(),
+                timeout=3.0,
+            )
+        except httpx.RequestError:
+            pass
+
+    def _apply_settings(data: dict) -> None:
+        routing = data.get("routing") or ROUTING_VOICE
+        if routing not in ROUTING_LABELS:
+            routing = ROUTING_VOICE
+        routing_dropdown.value = routing
+        history_check.value = bool(data.get("history", True))
+        scenarios_switch.value = bool(data.get("scenarios", True))
+        notify_critical_check.value = data.get("notify") == "critical"
+        strict_mode_check.value = data.get("mode", "strict") != "loyal"
+        if data.get("template_greeting") is not None:
+            template_greeting.value = str(data.get("template_greeting") or "")
+        if data.get("template_faq") is not None:
+            template_faq.value = str(data.get("template_faq") or "")
+
+    def _load_settings() -> None:
+        phone = connected_phone["value"]
+        if len(phone) < 10:
+            return
+        try:
+            resp = httpx.get(
+                f"{API_BASE}/api/v1/service/settings",
+                params={"phone": phone},
+                timeout=3.0,
+            )
+            if resp.status_code == 200:
+                _apply_settings(resp.json())
+                _apply_effects()
+        except httpx.RequestError:
+            pass
+
+    hist_filter = {"critical": False}
+    ui_tab = {"name": "dash"}
+
+    effect_banner = ft.Text("", size=12, color=MTS_DARK)
+    history_off_hint = ft.Text(
+        "История выключена — раздел недоступен, пока не включите галочку.",
+        size=12,
+        color=MTS_RED,
+        visible=False,
+    )
+    tg_status_hint = ft.Text(
+        "Пуши в Telegram: все звонки (если бот подключён)",
+        size=12,
+        color=MTS_GRAY,
+    )
+    dash_body = ft.Column(spacing=8, tight=True)
+    history_list = ft.Column(spacing=8, tight=True)
+    detail_box = ft.Container(
+        visible=False,
+        padding=ft.Padding.all(14),
+        bgcolor=MTS_WHITE,
+        border_radius=16,
+        border=ft.Border.all(1, "#E8E8EA"),
+        content=ft.Text("", size=13, color=MTS_DARK, selectable=True),
+    )
+
+    def _sync_template_fields():
+        enabled = bool(scenarios_switch.value)
+        template_greeting.disabled = not enabled
+        template_faq.disabled = not enabled
+        templates_off_hint.visible = not enabled
+
+    def _effect_summary() -> str:
+        routing = ROUTING_LABELS.get(routing_dropdown.value or ROUTING_VOICE, "Голос")
+        bits = [
+            f"Ответ: {routing.lower()}",
+            f"История: {'вкл' if history_check.value else 'выкл'}",
+            f"Шаблоны: {'вкл' if scenarios_switch.value else 'выкл'}",
+            f"Режим: {'строгий' if strict_mode_check.value else 'лояльный'}",
+        ]
+        if notify_critical_check.value:
+            bits.append("TG-пуши: только важные")
+        else:
+            bits.append("TG-пуши: все (если бот есть)")
+        return " · ".join(bits)
+
+    def _apply_effects():
+        effect_banner.value = _effect_summary()
+        history_off_hint.visible = not history_check.value
+        hist_all_btn.disabled = not history_check.value
+        hist_crit_btn.disabled = not history_check.value
+        refresh_hist_btn.disabled = not history_check.value
+        if not history_check.value:
+            history_list.controls = [
+                ft.Text(
+                    "История выключена в настройках — включите «История звонков и саммари».",
+                    size=13,
+                    color=MTS_GRAY,
+                )
+            ]
+            detail_box.visible = False
+        tg_status_hint.value = (
+            "Пуши в Telegram: только важные"
+            if notify_critical_check.value
+            else "Пуши в Telegram: все звонки (если бот подключён)"
+        )
+
+    def _fmt_when(raw) -> str:
+        return str(raw or "—").replace("T", " ")[:16]
+
+    def _load_dashboard():
+        dash_body.controls.clear()
+        try:
+            resp = httpx.get(f"{API_BASE}/api/v1/calls/stats", timeout=5.0)
+        except httpx.RequestError:
+            dash_body.controls.append(
+                ft.Text("API недоступен — запустите uvicorn на :8000", color=MTS_RED, size=13)
+            )
+            return
+        if resp.status_code != 200:
+            dash_body.controls.append(ft.Text("Дашборд недоступен", color=MTS_RED, size=13))
+            return
+        s = resp.json()
+        total = int(s.get("total") or 0)
+        critical = int(s.get("critical") or 0)
+        dash_body.controls.extend(
+            [
+                ft.Text(f"Всего карточек: {total}", size=15, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                ft.Text(
+                    f"Важные: {critical} ({s.get('critical_share') or 0}%) · "
+                    f"Рутина: {int(s.get('routine') or 0)}",
+                    size=13,
+                    color=MTS_GRAY,
+                ),
+            ]
+        )
+        if not total:
+            dash_body.controls.append(
+                ft.Text(
+                    "Пока пусто — появится после process_call / process_call_voice.",
+                    size=13,
+                    color=MTS_GRAY,
+                )
+            )
+            return
+        intents = s.get("by_intent") or {}
+        if intents:
+            dash_body.controls.append(
+                ft.Text("По намерениям", size=14, weight=ft.FontWeight.W_600, color=MTS_DARK)
+            )
+            for key, count in intents.items():
+                label = INTENT_RU.get(str(key), str(key))
+                dash_body.controls.append(ft.Text(f"· {label} — {count}", size=13, color=MTS_DARK))
+        actions = s.get("by_action") or {}
+        if actions:
+            dash_body.controls.append(
+                ft.Text("Что делать", size=14, weight=ft.FontWeight.W_600, color=MTS_DARK)
+            )
+            for key, count in actions.items():
+                label = ACTION_RU.get(str(key), str(key))
+                dash_body.controls.append(ft.Text(f"· {label} — {count}", size=13, color=MTS_DARK))
+
+    def _show_call_detail(item: dict):
+        flag = "⚠️ Важно" if item.get("is_critical") else "Звонок"
+        action = ACTION_RU.get(str(item.get("action_required") or ""), str(item.get("action_required") or "—"))
+        intent = INTENT_RU.get(str(item.get("intent") or ""), str(item.get("intent") or "—"))
+        lines = [
+            f"{flag} #{item.get('id')}",
+            f"Когда: {_fmt_when(item.get('created_at'))}",
+            f"Номер: {format_phone(str(item.get('caller_phone') or ''))}",
+            f"Кто: {item.get('caller_name') or 'не представился'}",
+            f"Намерение: {intent}",
+            f"Приоритет: {PRIORITY_RU.get(str(item.get('priority') or ''), '—')}",
+            f"Действие: {action}",
+            "",
+            "Резюме",
+            str(item.get("summary") or "—"),
+            "",
+            "Ответ агента",
+            str(item.get("agent_response") or "—")[:400],
+        ]
+        if not scenarios_switch.value:
+            lines += ["", "Шаблоны ответов выключены — см. вкладку «Шаблоны»."]
+        elif template_greeting.value or template_faq.value:
+            lines += ["", "Шаблоны линии"]
+            if template_greeting.value:
+                lines += ["Приветствие:", template_greeting.value.strip()[:200]]
+            if template_faq.value:
+                lines += ["FAQ:", template_faq.value.strip()[:300]]
+        step = str(item.get("recommended_next_step") or "").strip()
+        if step:
+            lines += ["", "Дальше", step]
+        detail_box.content = ft.Text("\n".join(lines), size=13, color=MTS_DARK, selectable=True)
+        detail_box.visible = True
+
+    def _call_card(item: dict) -> ft.Container:
+        flag = "⚠️" if item.get("is_critical") else "•"
+        title = (
+            f"{flag} #{item.get('id')}  "
+            f"{format_phone(str(item.get('caller_phone') or ''))}"
+        )
+        meta = (
+            f"{_fmt_when(item.get('created_at'))} · "
+            f"{INTENT_RU.get(str(item.get('intent') or ''), str(item.get('intent') or '—'))}"
+        )
+        return ft.Container(
+            padding=ft.Padding.all(12),
+            bgcolor=MTS_WHITE,
+            border_radius=14,
+            border=ft.Border.all(1, "#E8E8EA"),
+            on_click=lambda e, it=item: (_show_call_detail(it), page.update()),
+            content=ft.Column(
+                [
+                    ft.Text(title, size=14, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                    ft.Text(meta, size=12, color=MTS_GRAY),
+                    ft.Text(str(item.get("summary") or "—")[:180], size=13, color=MTS_DARK),
+                ],
+                spacing=4,
+                tight=True,
+            ),
+        )
+
+    def _load_history(*, critical: bool):
+        hist_filter["critical"] = critical
+        history_list.controls.clear()
+        detail_box.visible = False
+        if not history_check.value:
+            _apply_effects()
+            return
+        try:
+            resp = httpx.get(
+                f"{API_BASE}/api/v1/calls",
+                params={"limit": 20, "critical_only": critical},
+                timeout=5.0,
+            )
+        except httpx.RequestError:
+            history_list.controls.append(
+                ft.Text("API недоступен — запустите uvicorn на :8000", color=MTS_RED, size=13)
+            )
+            return
+        if resp.status_code != 200:
+            history_list.controls.append(ft.Text("История недоступна", color=MTS_RED, size=13))
+            return
+        payload = resp.json()
+        items = payload.get("items") or []
+        total = int(payload.get("total") or len(items))
+        title = "Важные звонки" if critical else "Все звонки"
+        history_list.controls.append(
+            ft.Text(f"{title} · показано {len(items)} из {total}", size=13, color=MTS_GRAY)
+        )
+        if not items:
+            history_list.controls.append(
+                ft.Text(
+                    "Важных обращений пока нет." if critical else "История пуста.",
+                    size=13,
+                    color=MTS_GRAY,
+                )
+            )
+            return
+        for item in items:
+            history_list.controls.append(_call_card(item))
+
+    def _tab_style(active: bool) -> ft.ButtonStyle:
+        return ft.ButtonStyle(
+            bgcolor=MTS_RED if active else MTS_WHITE,
+            color=MTS_WHITE if active else MTS_DARK,
+        )
+
+    def _show_tab(name: str):
+        ui_tab["name"] = name
+        dash_section.visible = name == "dash"
+        hist_section.visible = name == "hist"
+        tpl_section.visible = name == "tpl"
+        set_section.visible = name == "set"
+        tab_dash.style = _tab_style(name == "dash")
+        tab_hist.style = _tab_style(name == "hist")
+        tab_tpl.style = _tab_style(name == "tpl")
+        tab_set.style = _tab_style(name == "set")
+        if name == "dash":
+            _load_dashboard()
+        elif name == "hist":
+            _load_history(critical=hist_filter["critical"])
+        _apply_effects()
         page.update()
 
-    def _on_chat(e):
-        if chat_check.value:
-            voice_check.value = False
-        elif not voice_check.value:
-            chat_check.value = True
+    def _on_routing(_=None):
+        _apply_effects()
         page.update()
+        _push_settings()
 
-    voice_check.on_change = _on_voice
-    chat_check.on_change = _on_chat
+    def _on_feature(_=None):
+        _apply_effects()
+        page.update()
+        _push_settings()
+        if history_check.value and hist_section.visible:
+            _load_history(critical=hist_filter["critical"])
+            page.update()
+
+    def _on_templates(_=None):
+        _sync_template_fields()
+        _apply_effects()
+        page.update()
+        _push_settings()
+
+    routing_dropdown.on_change = _on_routing
+    scenarios_switch.on_change = _on_templates
+    template_greeting.on_blur = _on_templates
+    template_faq.on_blur = _on_templates
+    for box in setting_checks:
+        box.on_change = _on_feature
 
     def _mark_tg_active(phone: str) -> None:
         tg_on["value"] = True
@@ -654,6 +1006,9 @@ def main(page: ft.Page):
         tg_status_text.value = f"Активировано · {format_phone(phone)}"
         tg_status_text.color = MTS_RED
         page.update()
+
+    def _stop_tg_poll() -> None:
+        tg_on["stop"] = True
 
     def _on_tg_switch(e):
         e.control.value = tg_on["value"]
@@ -687,9 +1042,19 @@ def main(page: ft.Page):
             return True
         return False
 
+    def _poll_sleep(seconds: float) -> bool:
+        """Ждём с проверкой stop; True — нужно выйти из цикла опроса."""
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            if tg_on.get("stop"):
+                return True
+            time.sleep(0.2)
+        return bool(tg_on.get("stop"))
+
     def _start_poll():
         if tg_on.get("polling"):
             return
+        tg_on["stop"] = False
         tg_on["polling"] = True
 
         def loop():
@@ -699,14 +1064,13 @@ def main(page: ft.Page):
                         return
                     if _poll_once():
                         return
-                    time.sleep(1.5)
+                    if _poll_sleep(1.5):
+                        return
             finally:
                 tg_on["polling"] = False
 
-        if hasattr(page, "run_thread"):
-            page.run_thread(loop)
-        else:
-            threading.Thread(target=loop, daemon=True).start()
+        # Не page.run_thread: executor Flet join'ится при выходе и вешает терминал.
+        threading.Thread(target=loop, daemon=True, name="tg-status-poll").start()
 
     tg_open_btn = ft.FilledButton(
         TELEGRAM_OPEN_TEXT,
@@ -727,64 +1091,174 @@ def main(page: ft.Page):
         on_click=lambda e: disconnect_service(),
     )
 
+    tab_dash = ft.FilledButton("Дашборд", on_click=lambda e: _show_tab("dash"))
+    tab_hist = ft.FilledButton("История", on_click=lambda e: _show_tab("hist"))
+    tab_tpl = ft.FilledButton("Шаблоны", on_click=lambda e: _show_tab("tpl"))
+    tab_set = ft.FilledButton("Настройки", on_click=lambda e: _show_tab("set"))
+    hist_all_btn = ft.OutlinedButton(
+        "Все",
+        on_click=lambda e: (_load_history(critical=False), page.update()),
+    )
+    hist_crit_btn = ft.OutlinedButton(
+        "Важные",
+        on_click=lambda e: (_load_history(critical=True), page.update()),
+    )
+    refresh_hist_btn = ft.TextButton(
+        "Обновить",
+        on_click=lambda e: (
+            _load_history(critical=hist_filter["critical"])
+            if ui_tab["name"] == "hist"
+            else _load_dashboard(),
+            page.update(),
+        ),
+    )
+    refresh_dash_btn = ft.TextButton(
+        "Обновить",
+        on_click=lambda e: (_load_dashboard(), page.update()),
+    )
+
+    dash_section = ft.Column(
+        [
+            ft.Row(
+                [
+                    ft.Text("Аналитика звонков", size=16, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                    refresh_dash_btn,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            ),
+            effect_banner,
+            dash_body,
+        ],
+        spacing=10,
+        tight=True,
+        visible=True,
+    )
+    hist_section = ft.Column(
+        [
+            ft.Row(
+                [
+                    ft.Text("История", size=16, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                    refresh_hist_btn,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            ),
+            history_off_hint,
+            ft.Row([hist_all_btn, hist_crit_btn], spacing=8),
+            history_list,
+            detail_box,
+        ],
+        spacing=10,
+        tight=True,
+        visible=False,
+    )
+    tpl_section = ft.Column(
+        [
+            ft.Text(TEMPLATES_TAB_TITLE, size=16, weight=ft.FontWeight.W_600, color=MTS_DARK),
+            ft.Text(TEMPLATES_HINT, size=13, color=MTS_GRAY),
+            scenarios_switch,
+            templates_off_hint,
+            template_greeting,
+            template_faq,
+            ft.Text(
+                "Изменения сохраняются при выходе из поля или переключении шаблонов.",
+                size=12,
+                color=MTS_GRAY,
+            ),
+        ],
+        spacing=12,
+        tight=True,
+        visible=False,
+    )
+
+    set_section = ft.Column(
+        [
+            routing_dropdown,
+            ft.Text(FEATURES_TITLE, size=14, weight=ft.FontWeight.W_600, color=MTS_DARK),
+            *setting_rows,
+            effect_banner,
+            ft.Text(
+                "Настройки сразу меняют разделы приложения и сохраняются для бота.",
+                size=12,
+                color=MTS_GRAY,
+            ),
+            ft.Divider(height=1, color="#E8E8EA"),
+            ft.Container(
+                padding=ft.Padding.symmetric(horizontal=16, vertical=14),
+                bgcolor=MTS_WHITE,
+                border_radius=16,
+                border=ft.Border.all(1, "#E8E8EA"),
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "Telegram-бот (опционально)",
+                            size=15,
+                            weight=ft.FontWeight.W_600,
+                            color=MTS_DARK,
+                        ),
+                        ft.Row(
+                            [tg_active, tg_status_text],
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        tg_status_hint,
+                        ft.Text(TELEGRAM_TOGGLE_HINT, size=13, color=MTS_GRAY),
+                        tg_open_btn,
+                    ],
+                    spacing=8,
+                    tight=True,
+                ),
+            ),
+            disconnect_btn,
+        ],
+        spacing=12,
+        tight=True,
+        visible=False,
+    )
+
+    # вторая ссылка на баннер в дашборде — одна и та же control нельзя в двух местах
+    effect_banner_dash = ft.Text("", size=12, color=MTS_DARK)
+    dash_section.controls[1] = effect_banner_dash
+
+    def _apply_effects_full():
+        _sync_template_fields()
+        text = _effect_summary()
+        effect_banner.value = text
+        effect_banner_dash.value = text
+        history_off_hint.visible = not history_check.value
+        hist_all_btn.disabled = not history_check.value
+        hist_crit_btn.disabled = not history_check.value
+        refresh_hist_btn.disabled = not history_check.value
+        if not history_check.value:
+            history_list.controls = [
+                ft.Text(
+                    "История выключена в настройках — включите «История звонков и саммари».",
+                    size=13,
+                    color=MTS_GRAY,
+                )
+            ]
+            detail_box.visible = False
+        tg_status_hint.value = (
+            "Пуши в Telegram: только важные"
+            if notify_critical_check.value
+            else "Пуши в Telegram: все звонки (если бот подключён)"
+        )
+
+    _apply_effects = _apply_effects_full
+
     features_panel = ft.Container(
         visible=False,
         bgcolor=MTS_BG,
         padding=ft.Padding.symmetric(horizontal=24, vertical=16),
         content=ft.Column(
             [
-                ft.Text(
-                    FEATURES_TITLE,
-                    size=20,
-                    weight=ft.FontWeight.BOLD,
-                    color=MTS_DARK,
-                ),
-                ft.Text(
-                    ROUTING_TITLE,
-                    size=14,
-                    weight=ft.FontWeight.W_600,
-                    color=MTS_DARK,
-                ),
-                voice_row,
-                chat_row,
-                *setting_rows,
-                ft.Divider(height=1, color="#E8E8EA"),
-                ft.Container(
-                    padding=ft.Padding.symmetric(horizontal=16, vertical=14),
-                    bgcolor=MTS_WHITE,
-                    border_radius=16,
-                    border=ft.Border.all(1, "#E8E8EA"),
-                    content=ft.Column(
-                        [
-                            ft.Text(
-                                "Telegram-бот",
-                                size=15,
-                                weight=ft.FontWeight.W_600,
-                                color=MTS_DARK,
-                            ),
-                            ft.Row(
-                                [
-                                    tg_active,
-                                    tg_status_text,
-                                ],
-                                spacing=8,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            ),
-                            ft.Text(TELEGRAM_TOGGLE_HINT, size=13, color=MTS_GRAY),
-                            tg_open_btn,
-                        ],
-                        spacing=8,
-                        tight=True,
-                    ),
-                ),
-                ft.Text(
-                    "Все изменения вступают в силу сразу — без повторной настройки",
-                    size=12,
-                    color=MTS_GRAY,
-                ),
-                disconnect_btn,
+                ft.Text(SERVICE_NAME, size=20, weight=ft.FontWeight.BOLD, color=MTS_DARK),
+                ft.Row([tab_dash, tab_hist, tab_tpl, tab_set], spacing=8, wrap=True),
+                dash_section,
+                hist_section,
+                tpl_section,
+                set_section,
             ],
-            spacing=12,
+            spacing=14,
             tight=True,
         ),
     )
@@ -939,14 +1413,29 @@ def main(page: ft.Page):
         "login_btn": login_btn,
         "login_error": login_error,
         "setting_checks": setting_checks,
+        "history_check": history_check,
         "header_subtitle": header_subtitle,
         "back_btn": back_btn,
         "stage": stage,
         "dialog": details_dialog,
         "dialog_box": dialog_box,
+        "tab_dash": tab_dash,
+        "tab_hist": tab_hist,
+        "tab_tpl": tab_tpl,
+        "tab_set": tab_set,
+        "dash_section": dash_section,
+        "hist_section": hist_section,
+        "tpl_section": tpl_section,
+        "set_section": set_section,
+        "routing_dropdown": routing_dropdown,
+        "scenarios_switch": scenarios_switch,
+        "history_list": history_list,
+        "effect_banner": effect_banner,
     }
 
     page.on_resize = lambda e: apply_responsive(e.width, e.height)
+    page.on_close = lambda e: _stop_tg_poll()
+    page.on_disconnect = lambda e: _stop_tg_poll()
     apply_responsive()
 
 

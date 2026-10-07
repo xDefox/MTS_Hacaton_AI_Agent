@@ -12,6 +12,7 @@ from backend.database import get_db
 from backend.schemas import (
     CallHistoryItem,
     CallHistoryList,
+    CallStats,
     CallRequest,
     CallResponse,
     SynthesizeRequest,
@@ -19,13 +20,20 @@ from backend.schemas import (
     TranscribeResponse,
     VoiceCallResponse,
 )
-from backend.services.call_history import call_log_to_item, get_call_log, list_call_logs, save_call_log
+from backend.services.call_history import (
+    call_log_to_item,
+    get_call_log,
+    list_call_logs,
+    save_call_log,
+    summarize_call_logs,
+)
 from backend.services.speechkit_stt import (
     SpeechKitError,
     guess_audio_format,
     synthesize_ogg,
     transcribe_audio,
 )
+from backend.services import service_settings as svc_settings
 from backend.services.telegram_notify import (
     activate_line,
     add_subscriber,
@@ -55,6 +63,18 @@ class TelegramSubscribe(BaseModel):
 
 class TelegramRegister(BaseModel):
     phone: str = Field(..., min_length=5, description="Номер, на который подключают услугу")
+
+
+class ServiceSettingsBody(BaseModel):
+    phone: str = Field(..., min_length=5)
+    routing: Optional[Literal["voice", "chat", "hybrid"]] = None
+    history: Optional[bool] = None
+    scenarios: Optional[bool] = None
+    hotline: Optional[bool] = None
+    notify: Optional[Literal["all", "critical"]] = None
+    mode: Optional[Literal["strict", "loyal"]] = None
+    template_greeting: Optional[str] = None
+    template_faq: Optional[str] = None
 
 
 async def _attach_agent_tts(response: CallResponse) -> CallResponse:
@@ -120,6 +140,31 @@ def telegram_deactivate(body: TelegramRegister) -> dict:
 @router.get("/telegram/status")
 def telegram_status(phone: str = Query(..., min_length=5)) -> dict:
     return line_status(phone)
+
+
+@router.get("/service/settings")
+def get_service_settings(phone: str = Query(..., min_length=5)) -> dict:
+    """Настройки услуги по номеру — источник правды для бота."""
+    return svc_settings.get_settings(phone)
+
+
+@router.post("/service/settings")
+def post_service_settings(body: ServiceSettingsBody) -> dict:
+    """Фронт пишет настройки; бот только читает (бот необязателен)."""
+    try:
+        return svc_settings.update_settings(
+            body.phone,
+            routing=body.routing,
+            history=body.history,
+            scenarios=body.scenarios,
+            hotline=body.hotline,
+            notify=body.notify,
+            mode=body.mode,
+            template_greeting=body.template_greeting,
+            template_faq=body.template_faq,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Укажите номер телефона") from exc
 
 
 @router.post("/process_call", response_model=CallResponse)
@@ -260,6 +305,15 @@ def get_calls(
     rows = list_call_logs(db, critical_only=critical_only, limit=limit)
     items = [call_log_to_item(row) for row in rows]
     return CallHistoryList(items=items, total=len(items))
+
+
+@router.get("/calls/stats", response_model=CallStats)
+def get_call_stats(
+    limit: int = Query(500, ge=1, le=1000),
+    db: Session = Depends(get_db),
+) -> CallStats:
+    """Дашборд: все / важные / разбивка по intent и действию."""
+    return summarize_call_logs(db, limit=limit)
 
 
 @router.get("/calls/{call_id}", response_model=CallHistoryItem)
