@@ -24,24 +24,27 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:3b"
-    ollama_temperature: float = 0.1
-    ollama_timeout_sec: float = 90.0
-    # Скорость на CPU: короткий ctx + keep model hot + rules fast-path
-    ollama_num_ctx: int = 2048
-    ollama_num_predict: int = 128
-    ollama_keep_alive: str = "60m"
-    # False по умолчанию: организаторы требуют видимый LLM на каждом звонке.
-    # True — только ускорение демо (правило без Ollama); правила всё равно
-    # накладываются после LLM через apply_routing_rules (ТЗ: контроль).
+    ollama_temperature: float = 0.0
+    ollama_timeout_sec: float = 45.0
+    # Полный LLM (нет правила в тексте)
+    ollama_num_ctx: int = 1024
+    ollama_num_predict: int = 100
+    ollama_keep_alive: str = "2h"
+    # Lite: правило сработало → всё равно LLM (жюри), но крошечный промпт
+    ollama_lite_on_rule: bool = True
+    ollama_lite_num_ctx: int = 512
+    ollama_lite_num_predict: int = 64
+    # True = вообще без Ollama при правиле (НЕ для демо жюри «строго LLM»)
     ollama_rules_fast_path: bool = False
 
     whisper_model_size: str = "tiny"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    whisper_cpu_threads: int = 4
-    ollama_num_thread: int = 6
+    whisper_cpu_threads: int = 8
+    ollama_num_thread: int = 8
 
-    tts_timeout_sec: float = 25.0
+    tts_timeout_sec: float = 20.0
+    tts_max_chars: int = 220
 
     yc_folder_id: str = ""
     yc_api_key: str = ""
@@ -67,7 +70,6 @@ class Settings(BaseSettings):
     notify_on_critical: bool = True
 
     warmup_on_startup: bool = True
-    tts_max_chars: int = 280
 
 
 @lru_cache

@@ -1,3 +1,5 @@
+import logging
+import time
 from typing import Literal, Optional
 from uuid import uuid4
 
@@ -52,8 +54,10 @@ from backend.services.tts_storage import (
 from backend.services.yandex_llm import _strip_leading_disclosures, ensure_ai_disclosure
 from backend.config import get_settings
 from backend.services.warmup import warmup_demo_stack
+from backend.services.greeting_audio import greeting_audio_url
 from backend.services.access_audit import list_access_audit, log_access
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
 
@@ -61,10 +65,14 @@ router = APIRouter(prefix="/api/v1", tags=["calls"])
 def _text_for_tts(agent_response: str) -> str:
     """Без длинного disclosure — иначе pyttsx3 минутами «думает»."""
     settings = get_settings()
-    limit = max(80, int(settings.tts_max_chars))
+    limit = max(60, int(getattr(settings, "tts_max_chars", 220)))
     spoken = _strip_leading_disclosures(agent_response).strip()
     if not spoken:
         spoken = "Здравствуйте! Чем могу помочь?"
+    # Берём первое–второе предложение — быстрее озвучка
+    parts = [p.strip() for p in spoken.replace("!", ".").replace("?", ".").split(".") if p.strip()]
+    if parts:
+        spoken = ". ".join(parts[:2]) + "."
     if len(spoken) <= limit:
         return spoken
     cut = spoken[:limit].rsplit(" ", 1)[0].strip()
@@ -165,6 +173,17 @@ async def warmup_stack() -> dict:
     return await warmup_demo_stack(get_settings())
 
 
+@router.get("/greeting")
+def get_greeting_meta() -> dict:
+    """URL заранее озвученного приветствия (играть, пока идёт process_call_voice)."""
+    url = greeting_audio_url()
+    return {
+        "audio_url": url,
+        "ready": bool(url),
+        "hint": "Фронт: play(audio_url) → параллельно POST /process_call_voice",
+    }
+
+
 @router.get("/tts/{filename}")
 def get_synth_file(filename: str) -> FileResponse:
     """Скачать демо-файл TTS из data/tts/."""
@@ -194,8 +213,10 @@ async def process_call_voice(
     db: Session = Depends(get_db),
 ) -> VoiceCallResponse:
     """Голос → Whisper STT → локальный LLM → (опц.) TTS → история."""
+    t_total = time.perf_counter()
     raw = await audio.read()
     fmt = audio_format or guess_audio_format(audio.filename, audio.content_type)
+    t_stt = time.perf_counter()
     try:
         transcript, stt_engine = await transcribe_bytes(
             raw,
@@ -206,6 +227,7 @@ async def process_call_voice(
         )
     except SpeechError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    stt_ms = int((time.perf_counter() - t_stt) * 1000)
 
     user_text = (transcript or "").strip()
     if not user_text:
@@ -219,8 +241,10 @@ async def process_call_voice(
         user_message=user_text,
         client_phone=client_phone or "unknown",
     )
+    t_llm = time.perf_counter()
     try:
         response = await process_incoming_call(data)
+        llm_ms = int((time.perf_counter() - t_llm) * 1000)
         row = save_call_log(db, data, response)
         response.call_id = row.id
         if get_settings().notify_on_critical:
@@ -230,10 +254,23 @@ async def process_call_voice(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    total_ms = int((time.perf_counter() - t_total) * 1000)
+    latency = {"stt": stt_ms, "llm": llm_ms, "total": total_ms}
+    logger.info(
+        "Voice latency session=%s stt_ms=%s llm_ms=%s total_ms=%s model=%s",
+        session_id,
+        stt_ms,
+        llm_ms,
+        total_ms,
+        response.model,
+    )
+
     return VoiceCallResponse(
         **response.model_dump(),
         transcript=transcript,
         stt_engine=stt_engine,
+        greeting_audio_url=greeting_audio_url(),
+        latency_ms=latency,
     )
 
 

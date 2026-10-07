@@ -332,6 +332,22 @@ def test_fast_path_and_compact() -> int:
         failed += 1
     else:
         print("OK   fast-path spam (opt-in)", resp.model)
+
+    # lite prompt helper exists and stays short
+    from backend.services.local_llm import _lite_system_prompt
+    from backend.services.routing_rules import match_rule
+
+    rule = match_rule("Продаём контекстную рекламу сегодня")
+    if rule is None:
+        print("FAIL lite rule match")
+        failed += 1
+    else:
+        lite = _lite_system_prompt(rule)
+        if len(lite) > 900:
+            print("FAIL lite prompt too long", len(lite))
+            failed += 1
+        else:
+            print("OK   lite prompt size", len(lite))
     return failed
 
 

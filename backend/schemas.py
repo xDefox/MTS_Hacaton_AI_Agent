@@ -158,6 +158,17 @@ class VoiceCallResponse(CallResponse):
 
     transcript: str = Field(..., description="Распознанный текст")
     stt_engine: str = "faster-whisper"
+    greeting_audio_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Заранее озвученное приветствие+disclosure. "
+            "Фронт может играть параллельно, пока ждёт этот ответ (маск задержки LLM)."
+        ),
+    )
+    latency_ms: Optional[dict[str, int]] = Field(
+        default=None,
+        description="Тайминги: stt / llm / total (для демо и отладки)",
+    )
 
 
 class RoutingRuleIn(BaseModel):

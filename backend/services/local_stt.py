@@ -111,7 +111,10 @@ def transcribe_audio_local(
             str(path),
             language=language,
             beam_size=1,
+            best_of=1,
             vad_filter=False,
+            condition_on_previous_text=False,
+            without_timestamps=True,
         )
         text = " ".join(seg.text.strip() for seg in segments).strip()
     finally:
