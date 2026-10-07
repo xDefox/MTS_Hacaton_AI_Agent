@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes_call import router as call_router
+from backend.api.routes_live_call import router as live_call_router
 from backend.config import get_settings
 from backend.database import init_db
 
@@ -44,6 +45,7 @@ app.add_middleware(
 )
 
 app.include_router(call_router)
+app.include_router(live_call_router)
 
 
 @app.on_event("startup")

@@ -332,7 +332,7 @@ def _run_yandex_sync(messages: list[dict[str, str]], settings: Settings) -> str:
 
     started = time.perf_counter()
     try:
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=8.0)) as client:
             response = client.post(YANDEX_COMPLETION_URL, json=payload, headers=headers)
     except httpx.ConnectError as exc:
         raise YandexLLMError(

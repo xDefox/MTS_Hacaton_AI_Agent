@@ -7,6 +7,7 @@ python-dotenv>=1.0.0
 sqlalchemy>=2.0.0
 httpx>=0.27.0
 python-multipart>=0.0.9
+websockets>=12.0  # живой звонок /call (WebSocket), если uvicorn без [standard]
 
 # Основной стек: внешний Yandex (YandexGPT + SpeechKit) через REST на httpx —
 # отдельный SDK не нужен, ключи YC_FOLDER_ID / YC_API_KEY в .env

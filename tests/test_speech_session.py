@@ -82,11 +82,12 @@ async def test_multiturn_mock() -> int:
     if resp.action_required != ActionRequired.offer_telegram_chat or not resp.is_critical:
         print(f"FAIL multiturn sla routing: {resp.action_required} critical={resp.is_critical}")
         failed += 1
-    elif "искусственным интеллектом" not in resp.agent_response.lower():
-        print("FAIL multiturn disclosure")
+    elif "искусственным интеллектом" in resp.agent_response.lower():
+        # ассистент уже говорил в этой сессии — предупреждение было в приветствии
+        print(f"FAIL multiturn: disclosure repeated mid-dialog: {resp.agent_response!r}")
         failed += 1
     else:
-        print("OK   multiturn + telegram rule + disclosure")
+        print("OK   multiturn + telegram rule, no repeated disclosure")
     return failed
 
 

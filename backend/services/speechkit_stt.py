@@ -66,7 +66,7 @@ async def transcribe_audio(
         params["sampleRateHertz"] = str(sample_rate_hertz or 16000)
 
     try:
-        async with httpx.AsyncClient(timeout=45.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=8.0)) as client:
             response = await client.post(
                 STT_URL,
                 params=params,
@@ -107,7 +107,7 @@ async def synthesize_ogg(text: str, *, voice: str = "alena", lang: str = "ru-RU"
         "format": "oggopus",
     }
     try:
-        async with httpx.AsyncClient(timeout=45.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=8.0)) as client:
             response = await client.post(
                 TTS_URL,
                 data=data,

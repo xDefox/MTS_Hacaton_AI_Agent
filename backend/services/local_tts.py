@@ -8,9 +8,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_tts_engine = None
-
-
 class LocalTTSError(RuntimeError):
     """Local TTS error."""
 
@@ -25,22 +22,23 @@ def synthesize_wav_local(text: str) -> bytes:
     except ImportError as exc:
         raise LocalTTSError("pyttsx3 is not installed. Run: pip install pyttsx3") from exc
 
-    global _tts_engine
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         path = Path(tmp.name)
 
-    if _tts_engine is None:
-        _tts_engine = pyttsx3.init()
-        _tts_engine.setProperty("rate", 190)
-        for voice in _tts_engine.getProperty("voices") or []:
+    # Движок на каждый вызов: повторный runAndWait на старом движке (pyttsx3 2.99) зависает
+    engine = pyttsx3.init()
+    try:
+        engine.setProperty("rate", 190)
+        for voice in engine.getProperty("voices") or []:
             name = f"{getattr(voice, 'name', '')} {getattr(voice, 'id', '')}".lower()
             if "ru" in name or "russian" in name or "irina" in name:
-                _tts_engine.setProperty("voice", voice.id)
+                engine.setProperty("voice", voice.id)
                 break
-
-    engine = _tts_engine
-    engine.save_to_file(text, str(path))
-    engine.runAndWait()
+        engine.save_to_file(text, str(path))
+        engine.runAndWait()
+    finally:
+        engine.stop()
+        del engine
 
     if not path.is_file() or path.stat().st_size < 44:
         path.unlink(missing_ok=True)
