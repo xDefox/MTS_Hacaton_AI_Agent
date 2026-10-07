@@ -29,6 +29,32 @@ def _highpass(samples: np.ndarray, cutoff_hz: float) -> np.ndarray:
     return np.fft.irfft(spectrum * ramp, n=samples.size).astype(np.float32)
 
 
+def _level_speech(samples: np.ndarray) -> np.ndarray:
+    """Выравнивание громкости по ходу фразы (отодвинул телефон, говорит тише).
+
+    Тихие участки речи подтягиваются до +12 дБ, громкие слегка прижимаются.
+    Паузы получают минимальное усиление из речевых участков — шум не раздувается.
+    """
+    frame = SAMPLE_RATE // 20  # 50 мс
+    n = samples.size // frame
+    if n < 10:
+        return samples
+    frames = samples[: n * frame].reshape(n, frame)
+    rms = np.sqrt(np.mean(frames**2, axis=1)) + 1e-8
+    floor = float(np.percentile(rms, 20))
+    speech = rms > max(floor * 2.5, 1e-4)
+    if speech.sum() < 3:
+        return samples
+    target = float(np.median(rms[speech]))
+    gain = np.clip(target / rms, 0.7, 4.0)
+    gain[~speech] = float(gain[speech].min())
+    gain = np.convolve(gain, np.ones(5) / 5, mode="same")  # без резких скачков
+    per_sample = np.interp(
+        np.arange(samples.size), (np.arange(n) + 0.5) * frame, gain
+    ).astype(np.float32)
+    return samples * per_sample
+
+
 def _normalize(samples: np.ndarray) -> np.ndarray:
     rms = float(np.sqrt(np.mean(samples**2))) if samples.size else 0.0
     if rms < 1e-5:
@@ -86,6 +112,7 @@ def clean_for_stt(audio: bytes) -> bytes | None:
 
     samples = samples[: int(MAX_SECONDS * SAMPLE_RATE)].astype(np.float32)
     samples = _highpass(samples, HIGHPASS_HZ)
+    samples = _level_speech(samples)
     samples = _normalize(samples)
     pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
     logger.info(

@@ -57,6 +57,30 @@ async def _speechkit_or_empty(
         raise
 
 
+def _transcript_score(text: str) -> int:
+    # На шуме SpeechKit скорее теряет слова, чем выдумывает: больше слов — разборчивее
+    return sum(1 for w in text.split() if sum(ch.isalpha() for ch in w) >= 2)
+
+
+async def _best_of_two(cleaned_job, original_job) -> str:
+    """Очищенная и исходная запись распознаются параллельно; берём разборчивее."""
+    cleaned, original = await asyncio.gather(cleaned_job, original_job, return_exceptions=True)
+    if isinstance(cleaned, Exception) and isinstance(original, Exception):
+        raise cleaned
+    if isinstance(cleaned, Exception):
+        return original
+    if isinstance(original, Exception):
+        return cleaned
+    pick = cleaned if _transcript_score(cleaned) >= _transcript_score(original) else original
+    logger.info(
+        "STT best-of-two: cleaned=%r original=%r -> %s",
+        cleaned[:80],
+        original[:80],
+        "cleaned" if pick is cleaned else "original",
+    )
+    return pick
+
+
 async def transcribe_bytes(
     audio: bytes,
     *,
@@ -79,10 +103,13 @@ async def transcribe_bytes(
                 payload, fmt, rate = cleaned, "lpcm", SAMPLE_RATE
 
         try:
-            text = await _speechkit_or_empty(payload, fmt, lang, rate)
-            if not text and payload is not audio:
-                logger.info("Empty transcript after cleanup, retry with original audio")
+            if payload is audio:
                 text = await _speechkit_or_empty(audio, audio_format, lang, sample_rate_hertz)
+            else:
+                text = await _best_of_two(
+                    _speechkit_or_empty(payload, fmt, lang, rate),
+                    _speechkit_or_empty(audio, audio_format, lang, sample_rate_hertz),
+                )
             if not text:
                 # Тишина/шум: Whisper тут не поможет, а его загрузка — десятки секунд
                 logger.info("SpeechKit: no speech recognized, skip local fallback")

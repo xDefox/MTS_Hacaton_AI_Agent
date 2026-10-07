@@ -58,7 +58,7 @@ async def transcribe_audio(
 
     params: dict[str, str] = {
         "lang": lang,
-        "topic": "general",
+        "topic": settings.stt_topic or "general",
         "format": audio_format,
         "folderId": settings.yc_folder_id,
     }
