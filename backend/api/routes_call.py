@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
@@ -39,7 +40,16 @@ from backend.services.routing_rules import delete_rule, list_rules, upsert_rule
 from backend.services.scenarios import delete_scenario, list_scenarios, upsert_scenario
 from backend.services.speech_providers import SpeechError, synthesize_agent_audio, transcribe_bytes
 from backend.services.speechkit_stt import guess_audio_format
-from backend.services.telegram_notify import list_notifications, notify_ivan_if_needed
+from backend.services.telegram_notify import (
+    activate_line,
+    add_subscriber,
+    deactivate_line,
+    last_pending_phone,
+    line_status,
+    list_notifications,
+    notify_ivan_if_needed,
+    register_line,
+)
 from backend.services.training_examples import (
     delete_example,
     list_examples,
@@ -60,6 +70,51 @@ from backend.services.access_audit import list_access_audit, log_access
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["calls"])
+
+
+class TelegramSubscribe(BaseModel):
+    chat_id: int = Field(..., description="Telegram chat_id Ивана после /start")
+    phone: str = Field(default="", description="Номер линии из приложения МТС / заглушки")
+
+
+class TelegramRegister(BaseModel):
+    phone: str = Field(..., min_length=5, description="Номер, на который подключают услугу")
+
+
+@router.post("/telegram/register")
+def telegram_register(body: TelegramRegister) -> dict:
+    """Фронт: заглушка номера МТС до /start в боте."""
+    try:
+        phone = register_line(body.phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Укажите номер телефона") from exc
+    return line_status(phone)
+
+
+@router.post("/telegram/subscribe")
+def telegram_subscribe(body: TelegramSubscribe) -> dict:
+    """Бот /start: услуга активна на номере."""
+    phone = body.phone or last_pending_phone()
+    if not phone:
+        raise HTTPException(status_code=400, detail="Нет номера линии")
+    activate_line(phone, body.chat_id)
+    add_subscriber(body.chat_id)
+    return line_status(phone)
+
+
+@router.post("/telegram/deactivate")
+def telegram_deactivate(body: TelegramRegister) -> dict:
+    """Фронт: отключить услугу."""
+    try:
+        phone = deactivate_line(body.phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Укажите номер телефона") from exc
+    return line_status(phone)
+
+
+@router.get("/telegram/status")
+def telegram_status(phone: str = Query(..., min_length=5)) -> dict:
+    return line_status(phone)
 
 
 def _text_for_tts(agent_response: str) -> str:

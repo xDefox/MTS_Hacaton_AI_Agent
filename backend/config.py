@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # CJM: уведомления Ивану (опционально; без токена — только data/notifications.jsonl)
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    # Алиасы для фронта/main (TG_BOT_TOKEN / TG_CHAT_ID)
+    tg_bot_token: str = ""
+    tg_chat_id: str = ""
     notify_on_critical: bool = True
 
     warmup_on_startup: bool = True

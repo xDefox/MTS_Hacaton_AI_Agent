@@ -1,7 +1,7 @@
 """Local TTS cache for hackathon demo (not for production telephony).
 
 По ТЗ в проде ответ агента стримится в голосовой канал.
-Здесь data/tts/ — только демо для Swagger.
+Здесь data/tts/ — только демо для Swagger. Папка под .gitignore через data/.
 """
 
 from __future__ import annotations

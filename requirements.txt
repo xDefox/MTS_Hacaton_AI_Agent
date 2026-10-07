@@ -1,3 +1,4 @@
+# Backend API
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.9.0
@@ -9,3 +10,8 @@ httpx>=0.27.0
 python-multipart>=0.0.9
 faster-whisper>=1.0.0
 pyttsx3>=2.90
+
+# Frontend (Flet UI + Telegram bot) — на main / feature/frontend
+flet>=0.25.0
+aiogram>=3.13.0
+requests>=2.32.0
