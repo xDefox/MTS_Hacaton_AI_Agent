@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.schemas import CallRequest  # noqa: E402
-from backend.services.yandex_llm import process_call_with_yandex  # noqa: E402
+from backend.services.call_agent import process_incoming_call  # noqa: E402
 
 SCENARIOS = [
     CallRequest(
@@ -43,7 +43,7 @@ async def main() -> None:
     for req in SCENARIOS:
         print(f"--- {req.session_id} ---")
         print(f"IN: {req.user_message}")
-        resp = await process_call_with_yandex(req)
+        resp = await process_incoming_call(req)
         print(json.dumps(resp.model_dump(), ensure_ascii=False, indent=2))
         print()
 

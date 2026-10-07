@@ -40,10 +40,18 @@ def save_call_log(db: Session, request: CallRequest, response: CallResponse) -> 
     return row
 
 
-def list_call_logs(db: Session, *, critical_only: bool = False, limit: int = 100) -> list[CallLog]:
+def list_call_logs(
+    db: Session,
+    *,
+    critical_only: bool = False,
+    session_id: str | None = None,
+    limit: int = 100,
+) -> list[CallLog]:
     stmt = select(CallLog).order_by(CallLog.created_at.desc()).limit(limit)
     if critical_only:
         stmt = stmt.where(CallLog.is_critical.is_(True))
+    if session_id:
+        stmt = stmt.where(CallLog.session_id == session_id)
     return list(db.scalars(stmt).all())
 
 
@@ -68,6 +76,35 @@ def summarize_call_logs(db: Session, *, limit: int = 500) -> CallStats:
         by_action=dict(actions.most_common()),
         by_priority=dict(priorities.most_common()),
     )
+
+
+def update_call_log(db: Session, call_id: int, patch: dict) -> CallLog | None:
+    """Ручная корректировка карточки звонка (CJM этап 4)."""
+    row = get_call_log(db, call_id)
+    if row is None:
+        return None
+    allowed = {
+        "user_message",
+        "agent_response",
+        "summary",
+        "is_critical",
+        "priority",
+        "intent",
+        "action_required",
+        "caller_name",
+        "recommended_next_step",
+    }
+    changed = False
+    for key, value in patch.items():
+        if key not in allowed or value is None:
+            continue
+        setattr(row, key, value)
+        changed = True
+    if changed:
+        db.commit()
+        db.refresh(row)
+        logger.info("CallLog corrected id=%s fields=%s", call_id, list(patch.keys()))
+    return row
 
 
 def call_log_to_item(row: CallLog) -> CallHistoryItem:

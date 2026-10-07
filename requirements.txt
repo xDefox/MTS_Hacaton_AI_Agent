@@ -8,8 +8,10 @@ yandex-ai-studio-sdk>=0.22.0
 sqlalchemy>=2.0.0
 httpx>=0.27.0
 python-multipart>=0.0.9
+faster-whisper>=1.0.0
+pyttsx3>=2.90
 
-# Frontend (Flet UI + Telegram bot)
+# Frontend (Flet UI + Telegram bot) — на main / feature/frontend
 flet>=0.25.0
 aiogram>=3.13.0
 requests>=2.32.0

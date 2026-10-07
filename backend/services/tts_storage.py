@@ -1,9 +1,7 @@
 """Local TTS cache for hackathon demo (not for production telephony).
 
-По ТЗ в проде ответ агента стримится в голосовой канал в реальном времени
-и на диск оператора не кладётся как «файлы разговора».
-Здесь `data/tts/` — только демо: скачать/прослушать ответ в Swagger.
-Папка уже под `.gitignore` через `data/`.
+По ТЗ в проде ответ агента стримится в голосовой канал.
+Здесь data/tts/ — только демо для Swagger. Папка под .gitignore через data/.
 """
 
 from __future__ import annotations
@@ -20,15 +18,26 @@ def ensure_tts_dir() -> Path:
     return TTS_DIR
 
 
-def audio_path_for_call(call_id: int) -> Path:
-    return ensure_tts_dir() / f"call_{call_id}.ogg"
+def audio_path_for_call(call_id: int, ext: str = "wav") -> Path:
+    safe = ext.lstrip(".").lower() or "wav"
+    if safe not in {"wav", "ogg"}:
+        safe = "wav"
+    return ensure_tts_dir() / f"call_{call_id}.{safe}"
 
 
 def audio_url_for_call(call_id: int) -> str:
     return f"/api/v1/calls/{call_id}/audio"
 
 
-def save_call_audio(call_id: int, audio: bytes) -> Path:
-    path = audio_path_for_call(call_id)
+def save_call_audio(call_id: int, audio: bytes, ext: str = "wav") -> Path:
+    path = audio_path_for_call(call_id, ext=ext)
     path.write_bytes(audio)
     return path
+
+
+def find_call_audio(call_id: int) -> Path | None:
+    for ext in ("wav", "ogg"):
+        path = audio_path_for_call(call_id, ext=ext)
+        if path.is_file():
+            return path
+    return None

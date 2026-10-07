@@ -37,7 +37,7 @@ class CallRequest(BaseModel, extra="allow"):
     """Incoming turn from frontend / telephony (STT text)."""
 
     session_id: str = Field(..., description="Call / dialog session id")
-    user_message: str = Field(..., min_length=1, description="Caller utterance (or STT transcript)")
+    user_message: str = Field(..., min_length=1, max_length=4000, description="Caller utterance (or STT transcript)")
     client_phone: Optional[str] = Field(default="unknown", description="Caller phone if known")
     dialog_history: Optional[list[dict[str, str]]] = Field(
         default=None,
@@ -114,9 +114,9 @@ class SynthesizeResponse(BaseModel):
     text: str
     audio_url: Optional[str] = None
     filename: str
-    engine: str = "yandex-speechkit"
+    engine: str = "pyttsx3-local"
     note: str = (
-        "Демо: файл в data/tts/. По ТЗ в проде TTS стримится звонящему, без долгого хранения."
+        "Демо: файл в data/tts/. Локальный TTS по умолчанию; в проде — стрим в трубку."
     )
 
 
@@ -157,16 +157,83 @@ class CallStats(BaseModel):
 
 
 class TranscribeResponse(BaseModel):
-    """Результат SpeechKit STT."""
+    """Результат STT (локальный Whisper по умолчанию)."""
 
     transcript: str
     lang: str = "ru-RU"
     audio_format: str = "oggopus"
-    engine: str = "yandex-speechkit"
+    engine: str = "faster-whisper"
 
 
 class VoiceCallResponse(CallResponse):
     """Голос → STT → агент + история."""
 
-    transcript: str = Field(..., description="Распознанный текст (SpeechKit)")
-    stt_engine: str = "yandex-speechkit"
+    transcript: str = Field(..., description="Распознанный текст")
+    stt_engine: str = "faster-whisper"
+    greeting_audio_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Заранее озвученное приветствие+disclosure. "
+            "Фронт может играть параллельно, пока ждёт этот ответ (маск задержки LLM)."
+        ),
+    )
+    latency_ms: Optional[dict[str, int]] = Field(
+        default=None,
+        description="Тайминги: stt / llm / total (для демо и отладки)",
+    )
+
+
+class RoutingRuleIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    is_critical: Optional[bool] = None
+    intent: Optional[str] = None
+    action_required: Optional[str] = None
+    enabled: bool = True
+
+
+class ScenarioIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    kind: str = "custom"  # greeting | faq | custom
+    text: str
+    enabled: bool = True
+
+
+class HotlineRequest(BaseModel):
+    """Экстренный перевод на человека (ТЗ: усиление / горячая линия)."""
+
+    session_id: str
+    user_message: str = Field(
+        default="Просьба соединить с человеком",
+        min_length=1,
+    )
+    client_phone: Optional[str] = "unknown"
+
+
+class CallCorrectionIn(BaseModel):
+    """Ручная правка расшифровки / ответа / резюме (CJM: корректировка ответов ИИ)."""
+
+    user_message: Optional[str] = None
+    agent_response: Optional[str] = None
+    summary: Optional[str] = None
+    is_critical: Optional[bool] = None
+    priority: Optional[str] = None
+    intent: Optional[str] = None
+    action_required: Optional[str] = None
+    caller_name: Optional[str] = None
+    recommended_next_step: Optional[str] = None
+
+
+class TrainingExampleIn(BaseModel):
+    """Пример для обучения агента (ТЗ усиление)."""
+
+    id: Optional[str] = None
+    user_message: str
+    expected_intent: str = "other"
+    expected_action: str = "continue_dialog"
+    note: str = ""
+    enabled: bool = True
+

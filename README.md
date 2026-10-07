@@ -2,14 +2,14 @@
 
 ИИ-агент входящих звонков для IT-предпринимателя **Ивана Петрова**.
 
-Стек: **Python + FastAPI + YandexGPT + SpeechKit STT/TTS + SQLite** + системный промпт по CJM/ТЗ.  
-Фронт: **Flet / Telegram** в `frontend/` (партнёр).
+Стек: **Python + FastAPI + локальный Ollama (Qwen2.5) + Whisper STT + local TTS + SQLite**.  
+По умолчанию **без внешних API** (контур под требования жюри МТС). Системный промпт по CJM/ТЗ.
 
 ## Что умеет сейчас
 
 `POST /api/v1/process_call` — текст → ответ ИИ (+ опц. TTS).  
 `POST /api/v1/process_call?with_audio=true` — то же + озвучка ответа.  
-`POST /api/v1/process_call_voice` — аудио → STT → агент → TTS → история.  
+`POST /api/v1/process_call_voice` — аудио → STT → агент → TTS ответа → история.  
 `POST /api/v1/transcribe` — только голос → текст.  
 `POST /api/v1/synthesize` — произвольный текст → речь.
 
@@ -28,14 +28,17 @@
 
 - `GET /api/v1/calls` — список (новые сверху)
 - `GET /api/v1/calls?critical_only=true` — только важные
+- `GET /api/v1/calls?session_id=...` — реплики одной сессии
 - `GET /api/v1/calls/{id}` — детали карточки
+- `PATCH /api/v1/calls/{id}` — ручная правка резюме/ответа
 - `GET /api/v1/calls/{id}/audio` — озвучка ответа агента (если была сгенерирована)
+- `GET /api/v1/notifications` / `GET /api/v1/audit` / `GET /api/v1/stats`
+- `GET /ready` — чеклист готовности демо (≤ 5 мин)
 
 ## Быстрый старт (≤ 5 минут)
 
 1. Python 3.10+
-2. Каталог в [Yandex Cloud](https://console.yandex.cloud/), AI Studio / Foundation Models, API-ключ.
-3. Установка:
+2. Установка:
 
 ```bash
 python -m venv .venv
@@ -44,43 +47,43 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-4. Создайте `.env` в корне (файл не в git) и укажите `YC_FOLDER_ID` и `YC_API_KEY`.
+3. Установите [Ollama](https://ollama.com/download), затем:
+```bash
+ollama pull qwen2.5:3b
+ollama serve
+```
+4. (Опционально) `.env`: `LLM_PROVIDER=local`, `STT_PROVIDER=local`, `TTS_PROVIDER=local`.
 5. Запуск API:
 
 ```bash
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-6. Swagger: http://127.0.0.1:8000/docs  (API **1.3.0** — STT + TTS)  
-7. Health: http://127.0.0.1:8000/health  
+6. Swagger: http://127.0.0.1:8000/docs  
+7. Готовность: http://127.0.0.1:8000/ready → `ready=true`, после pull модели `demo_ready=true`  
+8. Health: http://127.0.0.1:8000/health → `llm_provider=local`
 
-### Frontend (Flet)
+### Ollama только на D: (важно при полном C:)
 
-Код партнёра в `frontend/`. Запуск UI:
-
-```bash
-python frontend/app.py
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_ollama_d.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\pull_qwen.ps1
 ```
 
-### Smoke-тесты (бэкенд)
+Модели: `D:\HUH\MTS_Hacaton_AI_Agent\.ollama\models`  
+Кэш Whisper: `D:\HUH\MTS_Hacaton_AI_Agent\.cache\huggingface`
 
-```bash
-python tests/smoke_test.py
-python tests/smoke_history.py
-python tests/smoke_voice.py
-python tests/smoke_tts.py
-```
+### Голос (локально по умолчанию)
 
-### Голос (SpeechKit)
-
-- `POST /api/v1/transcribe` — аудио → текст  
-- `POST /api/v1/synthesize` — текст → речь  
+- `POST /api/v1/transcribe` — аудио → текст (Whisper)  
+- `POST /api/v1/synthesize` — текст → речь (pyttsx3)  
 - `POST /api/v1/process_call_voice` — аудио → STT → агент → TTS  
 - `GET /api/v1/calls/{id}/audio` — скачать озвучку ответа  
 
-**Демо:** файлы в `data/tts/` (не в git). **По ТЗ в проде:** стрим в трубку, без долгого хранения.
+**Куда кладём аудио (демо):** `data/tts/call_{id}.wav` — локально, в `.gitignore` через `data/`.  
+**По ТЗ в проде:** TTS стримится звонящему в реальном времени (трубка / Voice Agent), файлы на диск не копятся.
 
-В Swagger для STT — короткий `.ogg` (до ~1 МБ). Без микрофона: `python tests/smoke_voice.py` / `smoke_tts.py`.
+В Swagger для STT — короткий `.ogg`/`.wav`. Без микрофона: `python tests/test_speech_session.py`.
 
 ### Пример запроса (текст + озвучка)
 
@@ -95,7 +98,7 @@ curl -X POST "http://127.0.0.1:8000/api/v1/process_call?with_audio=true" ^
 ## Структура
 
 ```
-backend/                  # бэкенд Трека 1
+backend/                  # весь бэкенд Трека 1
   main.py
   config.py
   database.py             # SQLite
@@ -105,19 +108,19 @@ backend/                  # бэкенд Трека 1
   prompts/system_ivan.py
   services/yandex_llm.py
   services/call_history.py
-  services/speechkit_stt.py  # STT + TTS API
+  services/speechkit_stt.py  # STT + TTS
   services/tts_storage.py    # data/tts/ для демо
-frontend/                 # Flet / Telegram (партнёр)
-data/calls.db             # локально, не в git
-data/tts/*.ogg            # озвучка ответов (демо), не в git
-docs/                     # ТЗ, CJM, tasks.md
-tests/                    # smoke бэка + тесты фронта
+tests/                    # smoke-тесты бэка
   smoke_test.py
   smoke_history.py
   smoke_voice.py
   smoke_tts.py
-  test_service_page.py    # фронт (партнёр) — не трогаем с бэка
+data/calls.db             # локально, не в git
+data/tts/*.ogg            # озвучка ответов (демо), не в git
+docs/                     # ТЗ, CJM, tasks.md
 ```
+
+Ветка `feature/backend` — только бэкенд. Фронт (`frontend/`) живёт в `main`, его отсюда не трогаем.
 
 ## Данные и безопасность (прототип)
 
