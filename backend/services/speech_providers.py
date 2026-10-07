@@ -14,6 +14,28 @@ class SpeechError(RuntimeError):
     """Unified speech error."""
 
 
+async def _transcribe_local(
+    audio: bytes,
+    *,
+    lang: str,
+    filename: str | None,
+) -> tuple[str, str]:
+    from backend.services.local_stt import LocalSTTError, transcribe_audio_local
+
+    settings = get_settings()
+    language = "ru" if lang.lower().startswith("ru") else lang.split("-")[0]
+    try:
+        text = await asyncio.to_thread(
+            transcribe_audio_local,
+            audio,
+            language=language,
+            filename=filename,
+        )
+    except LocalSTTError as exc:
+        raise SpeechError(str(exc)) from exc
+    return text, f"faster-whisper:{settings.whisper_model_size}"
+
+
 async def transcribe_bytes(
     audio: bytes,
     *,
@@ -26,7 +48,7 @@ async def transcribe_bytes(
     settings = get_settings()
     provider = (settings.stt_provider or "local").strip().lower()
     if provider == "yandex":
-        from backend.services.speechkit_stt import SpeechKitError, transcribe_audio
+        from backend.services.speechkit_stt import transcribe_audio
 
         try:
             text = await transcribe_audio(
@@ -35,25 +57,11 @@ async def transcribe_bytes(
                 lang=lang,
                 sample_rate_hertz=sample_rate_hertz,
             )
-        except SpeechKitError as exc:
-            raise SpeechError(str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 — сеть/прокси
-            raise SpeechError(f"Yandex STT unavailable: {exc}") from exc
-        return text, "yandex-speechkit"
+            return text, "yandex-speechkit"
+        except Exception as exc:  # noqa: BLE001 — нет ключей / сеть → Whisper
+            logger.warning("SpeechKit STT failed, fallback to local Whisper: %s", exc)
 
-    from backend.services.local_stt import LocalSTTError, transcribe_audio_local
-
-    language = "ru" if lang.lower().startswith("ru") else lang.split("-")[0]
-    try:
-        text = await asyncio.to_thread(
-            transcribe_audio_local,
-            audio,
-            language=language,
-            filename=filename,
-        )
-    except LocalSTTError as exc:
-        raise SpeechError(str(exc)) from exc
-    return text, f"faster-whisper:{settings.whisper_model_size}"
+    return await _transcribe_local(audio, lang=lang, filename=filename)
 
 
 async def synthesize_agent_audio(text: str) -> tuple[bytes, str, str]:
