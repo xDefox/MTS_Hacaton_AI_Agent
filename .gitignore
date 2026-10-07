@@ -18,9 +18,12 @@ env/
 # IDE / OS
 .idea/
 .vscode/
+.cursor/
 *.swp
 .DS_Store
 Thumbs.db
+docs/~$*
+~$*
 
 # Runtime / local data
 data/
@@ -35,6 +38,14 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Mobile / Flet build artifacts (UI копируется prepare_mobile.ps1)
+mobile/build/
+mobile/frontend/
+mobile/api_defaults.py
+*.apk
+*.aab
+*.ipa
 
 # Personal notes — не в репозиторий
 info/

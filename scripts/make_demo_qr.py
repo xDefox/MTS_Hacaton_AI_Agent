@@ -90,6 +90,7 @@ def demo_url() -> str:
         return override
 
     port = (os.getenv("DEMO_PORT") or "8000").strip()
+    # Только /app — лёгкая страница. Корень / больше не подменяет API.
     url = f"http://{local_ip()}:{port}/app"
     print(
         f"DEMO_WEB_URL не задан — QR на LAN лёгкий веб: {url}\n"

@@ -58,6 +58,8 @@ TELEGRAM_TOGGLE_HINT = (
     "Голый /start бота не активирует услугу."
 )
 TELEGRAM_OPEN_TEXT = "Перейти в Telegram-бота"
+TRY_SERVICE_TEXT = "Попробовать услугу"
+TRY_SERVICE_HINT = "Живой диалог во вкладке «Звонок» — тот же ИИ-агент"
 # Ссылку можно переопределить переменной окружения TG_BOT_URL
 TELEGRAM_BOT_URL = os.getenv(
     "TG_BOT_URL",

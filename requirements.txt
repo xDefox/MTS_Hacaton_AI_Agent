@@ -24,6 +24,7 @@ pypiwin32>=223; platform_system=="Windows"
 
 # === Frontend (Flet) + Telegram bot ===
 flet>=0.25.0
+flet-webview==0.86.5  # вкладка «Звонок»: голос mic+VAD внутри Flet
 aiogram>=3.13.0
 requests>=2.32.0
 

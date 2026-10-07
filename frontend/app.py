@@ -12,9 +12,9 @@ import time
 import flet as ft
 import httpx
 
-from backend.services.telegram_notify import format_phone, normalize_phone
-
-from .tg_dashboard import ACTION_RU, INTENT_RU, PRIORITY_RU
+from .phone_utils import format_phone, normalize_phone
+from .labels import ACTION_RU, INTENT_RU, PRIORITY_RU
+from .live_call_flet import LiveCallController
 from .assests import (
     MTS_RED,
     MTS_RED_DARK,
@@ -38,6 +38,8 @@ from .assests import (
     TELEGRAM_OPEN_TEXT,
     TELEGRAM_TOGGLE_HINT,
     TELEGRAM_BOT_URL,
+    TRY_SERVICE_TEXT,
+    TRY_SERVICE_HINT,
     FEATURES_TITLE,
     FEATURES,
     ROUTING_TITLE,
@@ -79,7 +81,13 @@ from .assests import (
 
 CARD_SIZE = 280            # карточка на десктопе
 MOBILE_BREAKPOINT = 640    # ниже — маленький экран (телефон)
-API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
+# На телефоне 127.0.0.1 — сам телефон; для APK задайте API_BASE / DEMO_API_URL (tunnel).
+API_BASE = (
+    os.getenv("API_BASE")
+    or os.getenv("DEMO_API_URL")
+    or os.getenv("DEMO_WEB_URL")
+    or "http://127.0.0.1:8000"
+).rstrip("/")
 MOBILE_PLATFORMS = {
     ft.PagePlatform.ANDROID,
     ft.PagePlatform.IOS,
@@ -140,6 +148,7 @@ def main(page: ft.Page):
 
     connected_phone = {"value": ""}
     bind_token = {"value": ""}
+    live_call_ref: dict = {"ctl": None}
     service_on = {"value": False}
     tg_on = {"value": False}
     login_phone = _mts_text_field(
@@ -305,6 +314,12 @@ def main(page: ft.Page):
             return f"{base}?start={token}"
         # Без токена — голый бот (пользователь введёт свой номер), не чужой pending.
         return base
+
+    def _open_live_call(_=None):
+        ctl = live_call_ref.get("ctl")
+        if ctl is not None:
+            ctl.refresh_line(reload=True)
+        _show_tab("call")
 
     def _sync_tg_open_url():
         """Ссылка на кнопке = клиентский <a href> с одноразовым токеном этой сессии."""
@@ -1380,10 +1395,12 @@ def main(page: ft.Page):
         hist_section.visible = name == "hist"
         tpl_section.visible = name == "tpl"
         set_section.visible = name == "set"
+        call_section.visible = name == "call"
         tab_dash.style = _tab_style(name == "dash")
         tab_hist.style = _tab_style(name == "hist")
         tab_tpl.style = _tab_style(name == "tpl")
         tab_set.style = _tab_style(name == "set")
+        tab_call.style = _tab_style(name == "call")
         if name == "dash":
             _load_dashboard()
         elif name == "hist":
@@ -1392,6 +1409,10 @@ def main(page: ft.Page):
             _load_scenarios()
         elif name == "set":
             _load_rules()
+        elif name == "call":
+            ctl = live_call_ref.get("ctl")
+            if ctl is not None:
+                ctl.refresh_line()
         _apply_effects()
         page.update()
 
@@ -1696,6 +1717,39 @@ def main(page: ft.Page):
             padding=ft.Padding.symmetric(horizontal=20, vertical=12),
         ),
     )
+    _try_style = ft.ButtonStyle(
+        bgcolor=MTS_DARK,
+        color=MTS_WHITE,
+        shape=ft.RoundedRectangleBorder(radius=12),
+        padding=ft.Padding.symmetric(horizontal=20, vertical=14),
+    )
+    live_try_dash_btn = ft.FilledButton(
+        TRY_SERVICE_TEXT,
+        icon=ft.Icons.PHONE_IN_TALK,
+        on_click=lambda e: _open_live_call(),
+        style=_try_style,
+    )
+    live_try_btn = ft.FilledButton(
+        TRY_SERVICE_TEXT,
+        icon=ft.Icons.PHONE_IN_TALK,
+        on_click=lambda e: _open_live_call(),
+        style=_try_style,
+    )
+    live_call = LiveCallController(
+        page=page,
+        api_base=API_BASE,
+        get_phone=lambda: connected_phone["value"],
+        colors={"red": MTS_RED, "dark": MTS_DARK, "gray": MTS_GRAY, "white": MTS_WHITE},
+        flet_port=int(os.getenv("FLET_PORT") or "8550"),
+    )
+    live_call_ref["ctl"] = live_call
+    call_section = ft.Column(
+        [live_call.build()],
+        spacing=12,
+        tight=True,
+        visible=False,
+        expand=True,
+    )
     _sync_tg_open_url()
 
     disconnect_btn = ft.TextButton(
@@ -1706,6 +1760,7 @@ def main(page: ft.Page):
 
     tab_dash = ft.FilledButton("Дашборд", on_click=lambda e: _show_tab("dash"))
     tab_hist = ft.FilledButton("История", on_click=lambda e: _show_tab("hist"))
+    tab_call = ft.FilledButton("Звонок", on_click=lambda e: _open_live_call())
     tab_tpl = ft.FilledButton("Шаблоны", on_click=lambda e: _show_tab("tpl"))
     tab_set = ft.FilledButton("Настройки", on_click=lambda e: _show_tab("set"))
     hist_all_btn = ft.OutlinedButton(
@@ -1749,6 +1804,21 @@ def main(page: ft.Page):
                 vertical_alignment=ft.CrossAxisAlignment.START,
             ),
             effect_banner,
+            ft.Container(
+                padding=ft.Padding.symmetric(horizontal=14, vertical=12),
+                bgcolor=MTS_WHITE,
+                border_radius=16,
+                border=ft.Border.all(1, "#E8E8EA"),
+                content=ft.Column(
+                    [
+                        ft.Text("Живой диалог", size=15, weight=ft.FontWeight.W_600, color=MTS_DARK),
+                        ft.Text(TRY_SERVICE_HINT, size=12, color=MTS_GRAY),
+                        live_try_dash_btn,
+                    ],
+                    spacing=8,
+                    tight=True,
+                ),
+            ),
             dash_body,
         ],
         spacing=12,
@@ -1842,6 +1912,9 @@ def main(page: ft.Page):
                         tg_status_hint,
                         ft.Text(TELEGRAM_TOGGLE_HINT, size=13, color=MTS_GRAY),
                         tg_open_btn,
+                        ft.Divider(height=1, color="#E8E8EA"),
+                        ft.Text(TRY_SERVICE_HINT, size=13, color=MTS_GRAY),
+                        live_try_btn,
                     ],
                     spacing=8,
                     tight=True,
@@ -1899,12 +1972,13 @@ def main(page: ft.Page):
             [
                 ft.Text(SERVICE_NAME, size=20, weight=ft.FontWeight.BOLD, color=MTS_DARK),
                 ft.Row(
-                    [tab_dash, tab_hist, tab_tpl, tab_set],
+                    [tab_dash, tab_hist, tab_call, tab_tpl, tab_set],
                     spacing=8,
                     wrap=True,
                 ),
                 dash_section,
                 hist_section,
+                call_section,
                 tpl_section,
                 set_section,
             ],
@@ -2131,10 +2205,14 @@ if __name__ == "__main__":
         f"Flet UI: view={view.value} renderer={web_renderer.value} "
         f"http://{host}:{port}/  (API_BASE={API_BASE})"
     )
+    from pathlib import Path
+
+    assets_dir = str(Path(__file__).resolve().parent / "assets")
     ft.run(
         main,
         view=view,
         host=host,
         port=port,
         web_renderer=web_renderer,
+        assets_dir=assets_dir,
     )

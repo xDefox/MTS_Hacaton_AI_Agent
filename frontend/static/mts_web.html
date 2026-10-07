@@ -51,11 +51,13 @@
       background: #fafafa; border-radius: 12px; padding: 12px; font-size: 14px;
       margin: 12px 0; line-height: 1.45;
     }
-    a.tg {
+    a.tg, a.try {
       display: block; text-align: center; text-decoration: none;
-      background: #2AABEE; color: #fff; border-radius: 12px; padding: 14px;
-      font-weight: 600; margin-top: 10px;
+      border-radius: 12px; padding: 14px; font-weight: 600; margin-top: 10px;
+      color: #fff;
     }
+    a.tg { background: #2AABEE; }
+    a.try { background: #1a1a1a; }
   </style>
 </head>
 <body>
@@ -79,7 +81,9 @@
       <div class="brand">МТС</div>
       <h1>Услуга на линии</h1>
       <div class="status" id="lineStatus">—</div>
-      <p class="hint">Telegram подключается только по личной ссылке с ключом.</p>
+      <p class="hint">Живой диалог в браузере — микрофон и голос ИИ-секретаря.</p>
+      <a class="try" id="tryLink" href="/call" target="_blank" rel="noopener">Попробовать услугу</a>
+      <p class="hint">Telegram — только по личной ссылке с ключом из приложения.</p>
       <a class="tg" id="tgLink" href="#" target="_blank" rel="noopener">Перейти в Telegram</a>
       <button class="secondary" id="btnRefresh">Обновить статус</button>
       <button class="ghost" id="btnOut">Выйти</button>
@@ -138,6 +142,7 @@
         (activated ? "Telegram: активирован" : "Telegram: ожидает переход по ссылке");
       const start = token ? `?start=${encodeURIComponent(token)}` : "";
       $("tgLink").href = `${BOT}${start}`;
+      $("tryLink").href = `/call?phone=${encodeURIComponent(phone)}`;
       localStorage.setItem("mts_phone", phone);
       if (token) localStorage.setItem("mts_token", token);
     }

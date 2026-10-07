@@ -55,17 +55,15 @@ _MTS_WEB_HTML = (
 )
 
 
-@app.get("/", response_class=HTMLResponse)
 @app.get("/app", response_class=HTMLResponse)
 def mts_web_app() -> HTMLResponse:
-    """Лёгкий веб для телефона/QR (Flet ~10MB — на LTE «висит»)."""
+    """Лёгкий веб для QR/телефона. Не на / — иначе кажется, что основное приложение «пропало»."""
     html = _MTS_WEB_HTML.read_text(encoding="utf-8")
     bot = (os.getenv("TG_BOT_URL") or "https://t.me/MtsSmartCallBot").rstrip("/")
     html = html.replace(
         'window.TG_BOT_URL || "https://t.me/MtsSmartCallBot"',
         f'window.TG_BOT_URL || "{bot}"',
     )
-    # Явно прокинем в страницу
     inject = f"<script>window.TG_BOT_URL={bot!r};</script>"
     html = html.replace("</head>", inject + "\n</head>", 1)
     return HTMLResponse(html)

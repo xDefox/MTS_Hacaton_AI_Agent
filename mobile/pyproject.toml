@@ -1,0 +1,29 @@
+[project]
+name = "mts-ai-secretary"
+version = "1.0.0"
+description = "МТС · Умный секретарь — ИИ-агент входящих звонков"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "flet==0.86.5",
+  "flet-webview==0.86.5",
+  "httpx>=0.27.0",
+  "python-dotenv>=1.0.0",
+]
+
+[tool.flet]
+org = "ru.mts.hackathon"
+product = "МТС Умный секретарь"
+company = "MTS Hackathon"
+copyright = "Copyright (c) 2026 MTS Hackathon Team"
+
+[tool.flet.app]
+path = "."
+
+[tool.flet.android]
+min_sdk_version = 24
+target_sdk_version = 35
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
+"android.permission.RECORD_AUDIO" = true
+"android.permission.MODIFY_AUDIO_SETTINGS" = true
