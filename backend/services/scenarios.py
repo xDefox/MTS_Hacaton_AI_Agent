@@ -98,11 +98,19 @@ def upsert_scenario(data: dict[str, Any]) -> dict[str, Any]:
     return asdict(new)
 
 
+# Один корень «работ» ловит и «часы работы», и «услуга не работает» — без контекста не считаем
+_WEAK_ALONE_STEMS = frozenset({"работ", "дела", "услуг", "звонк", "вопрос", "помог", "скажи"})
+_HOURS_HINTS = ("час", "скольк", "график", "режим", "открыт", "до сколь")
+
+
 def find_faq_answer(question: str) -> str | None:
-    """Ближайший по словам включённый FAQ/custom-шаблон (для ответа без LLM)."""
+    """Ближайший FAQ/custom по *названию* шаблона (текст ответа в матч не входит)."""
+    q_raw = (question or "").lower()
     words = {w for w in _words(question) if len(w) > 3}
     if not words:
         return None
+    q_stems = {w[:5] for w in words}
+    hours_ctx = any(h in q_raw for h in _HOURS_HINTS)
     best, best_score = None, 0
     for s in load_scenarios():
         if not s.enabled or s.kind == "greeting":
@@ -110,9 +118,21 @@ def find_faq_answer(question: str) -> str | None:
         text = clean_template(s.text)
         if not text:
             continue
-        stems = {w[:5] for w in _words(f"{s.name} {text}") if len(w) > 3}
-        score = len({w[:5] for w in words} & stems)
-        if score > best_score:
+        name_ws = [w for w in _words(s.name) if len(w) > 3]
+        name_stems = {w[:5] for w in name_ws}
+        if not name_stems:
+            continue
+        overlap = name_stems & q_stems
+        score = len(overlap)
+        if any(w in q_raw for w in name_ws if len(w) >= 5):
+            score = max(score, 2)
+        # «не работает услуга» ≠ «часы работы»
+        if score and overlap <= _WEAK_ALONE_STEMS and not hours_ctx:
+            score = 0
+        if score == 1 and len(name_stems) >= 2 and overlap <= _WEAK_ALONE_STEMS and hours_ctx:
+            score = 2  # «до скольки работаете» → шаблон «часы работы»
+        need = 2 if len(name_stems) >= 2 else 1
+        if score >= need and score > best_score:
             best, best_score = text, score
     return best if best_score >= 1 else None
 
@@ -122,6 +142,7 @@ _STOP_WORDS = frozenset(
         "если", "можно", "пожалуйста", "здравствуйте", "скажите", "подскажите",
         "какие", "какой", "какая", "когда", "ваши", "ваша", "ваше", "вашей", "вашего",
         "есть", "меня", "этот", "этого", "хочу", "хотел", "хотела", "нужно", "очень",
+        "алло", "моя", "мое", "моё", "мне",
     }
 )
 

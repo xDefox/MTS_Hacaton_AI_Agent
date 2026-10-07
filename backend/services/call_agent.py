@@ -373,14 +373,41 @@ def finalize_agent_reply(request: CallRequest, text: str) -> str:
     return ensure_ai_disclosure(text)
 
 
+def _faq_template_reply(request: CallRequest) -> CallResponse | None:
+    """FAQ/«Свой» шаблон из UI — жёстко, до Yandex (иначе модель подменяет свой текст)."""
+    if request.line_phone:
+        prefs = get_line_settings(request.line_phone)
+        if not prefs.get("scenarios", True):
+            return None
+    from backend.services.scenarios import find_faq_answer
+
+    answer = find_faq_answer(request.user_message or "")
+    if not answer:
+        return None
+    logger.info("FAQ template hit session=%s answer=%r", request.session_id, answer[:80])
+    return CallResponse(
+        agent_response=answer,
+        is_critical=False,
+        priority=Priority.normal,
+        intent=Intent.faq,
+        action_required=ActionRequired.continue_dialog,
+        summary="Ответ по шаблону FAQ",
+        recommended_next_step="Продолжить диалог",
+        session_id=request.session_id,
+        model="scenario-faq",
+    )
+
+
 async def process_incoming_call(
     request: CallRequest,
     settings: Settings | None = None,
 ) -> CallResponse:
     settings = settings or get_settings()
-    # Жёстко: только внешний YandexGPT. Ollama/local не используем.
-    logger.info("LLM provider=yandex (external only)")
-    response = await process_call_with_yandex(request, settings)
+    # Сначала шаблон FAQ из UI — иначе Yandex отвечает «с 10 до 19» вместо вашего текста
+    response = _faq_template_reply(request)
+    if response is None:
+        logger.info("LLM provider=yandex (external only)")
+        response = await process_call_with_yandex(request, settings)
     response = apply_routing_rules(request, response)
     response = _guard_non_business_escalation(request, response)
     response = _apply_line_preferences(request, response)
