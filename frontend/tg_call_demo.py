@@ -44,7 +44,9 @@ def start_call_session(*, chat_id: int, line_phone: str, prefs: dict) -> dict[st
         "started_at": time.time(),
         "turns": 0,
         "call_ids": [],
+        # Disclosure уже в приветствии — бэкенд не должен повторять
         "dialog_history": [{"role": "assistant", "text": greeting}],
+        "disclosed": True,
     }
     if faq:
         session["dialog_history"].append(
