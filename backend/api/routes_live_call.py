@@ -14,9 +14,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
-from backend.api.routes_call import _text_for_tts
 from backend.config import get_settings
 from backend.database import SessionLocal
 from backend.schemas import ActionRequired, CallRequest
@@ -26,18 +25,21 @@ from backend.services.call_history import save_call_log
 from backend.services.content_filter import clean_template
 from backend.services.speech_providers import SpeechError, synthesize_agent_audio, transcribe_bytes
 from backend.services.telegram_notify import normalize_phone, notify_ivan_if_needed
-from backend.services.yandex_llm import AI_DISCLOSURE_PREFIX
+from backend.services.yandex_llm import AI_DISCLOSURE_PREFIX, _strip_leading_disclosures
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["live-call"])
 
-PAGE_PATH = Path(__file__).resolve().parents[1] / "static" / "live_call.html"
+STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
+PAGE_PATH = STATIC_DIR / "live_call.html"
+VAD_PATH = STATIC_DIR / "live_vad.js"
 DEFAULT_GREETING = "Здравствуйте! Компания Ивана Петрова, слушаю вас."
 NOT_HEARD_REPLY = "Простите, не расслышал. Повторите, пожалуйста."
 HISTORY_LIMIT = 12
 # В живом разговоре паузу дольше пары секунд не ждём: лучше локальный голос, чем тишина
 YANDEX_TTS_TIMEOUT_S = 6.0
+SPOKEN_MAX_CHARS = 900
 _GREETING_AUDIO_CACHE_LIMIT = 32
 _greeting_audio: dict[str, tuple[bytes, str, str]] = {}
 
@@ -45,6 +47,11 @@ _greeting_audio: dict[str, tuple[bytes, str, str]] = {}
 @router.get("/call", response_class=HTMLResponse, include_in_schema=False)
 def live_call_page() -> HTMLResponse:
     return HTMLResponse(PAGE_PATH.read_text(encoding="utf-8"))
+
+
+@router.get("/call/live_vad.js", include_in_schema=False)
+def live_call_vad() -> Response:
+    return Response(VAD_PATH.read_text(encoding="utf-8"), media_type="application/javascript")
 
 
 def _greeting_for_line(line_phone: str) -> str:
@@ -58,6 +65,16 @@ def _greeting_for_line(line_phone: str) -> str:
     if "искусственным интеллектом" in body.lower():
         return body
     return f"{AI_DISCLOSURE_PREFIX}{body}"
+
+
+def _spoken_reply(text: str) -> str:
+    """Голосом — весь ответ, как на экране; режем только очень длинный и по границе фразы."""
+    spoken = _strip_leading_disclosures(text).strip() or text.strip()
+    if len(spoken) <= SPOKEN_MAX_CHARS:
+        return spoken
+    head = spoken[:SPOKEN_MAX_CHARS]
+    end = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+    return head[: end + 1] if end > 0 else head.rsplit(" ", 1)[0] + "."
 
 
 async def _say(
@@ -169,7 +186,7 @@ async def live_call_ws(
             await _say(
                 ws,
                 response.agent_response,
-                spoken=_text_for_tts(response.agent_response),
+                spoken=_spoken_reply(response.agent_response),
                 action=response.action_required.value,
                 intent=response.intent.value,
                 is_critical=response.is_critical,

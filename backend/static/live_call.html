@@ -52,21 +52,18 @@
     <div class="log" id="log"></div>
   </div>
 </div>
+<script src="/call/live_vad.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 $("phone").value = params.get("phone") || localStorage.getItem("liveCallPhone") || "";
 
-// --- параметры детектора речи ---
 const TARGET_RATE = 16000;
-const END_SILENCE_MS = 800;     // столько тишины = конец фразы
-const MIN_SPEECH_MS = 350;      // короче — щелчок/кашель, не отправляем
-const MAX_UTTERANCE_MS = 25000; // лимит SpeechKit ~30 с
-const PREROLL_FRAMES = 4;       // захватываем начало слова до срабатывания
 
 let ws = null, ctx = null, stream = null, proc = null, player = null;
 let state = "idle", pendingAudioFormat = "ogg", callStart = 0, timerId = null;
-let noiseFloor = 0.004, utter = [], preroll = [], speechMs = 0, silenceMs = 0, voicedFrames = 0;
+const vad = LiveVad.createVad();
+let bargedPlayer = null;
 
 function setState(s, label) {
   state = s;
@@ -112,36 +109,35 @@ function toWav(chunks) {
   return buf;
 }
 
+// Ложное перебивание (гул, кашель) — агент договаривает с того же места
+function resumeAgent() {
+  const p = bargedPlayer; bargedPlayer = null;
+  if (!p || p !== player || p.ended) return false;
+  setState("agent", "Агент говорит… (можно перебить)");
+  p.play().catch(() => setState("listen", "Слушаю…"));
+  return true;
+}
+
 function onFrame(e) {
   const raw = e.inputBuffer.getChannelData(0);
   const frame = downsample(raw, ctx.sampleRate);
   const frameMs = (raw.length / ctx.sampleRate) * 1000;
-  let sum = 0; for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
-  const rms = Math.sqrt(sum / Math.max(1, frame.length));
+  const rms = LiveVad.rmsOf(frame);
   $("level").style.width = Math.min(100, rms * 900) + "%";
 
   if (state === "think" || state === "idle") return;
-  // Пока агент говорит, порог выше: перебить можно, а эхо динамика не сработает
-  const thr = Math.max(noiseFloor * 3, 0.012) * (state === "agent" ? 2.5 : 1);
-
-  if (state !== "speech") {
-    if (rms < thr) noiseFloor = noiseFloor * 0.97 + rms * 0.03;
-    preroll.push(frame); if (preroll.length > PREROLL_FRAMES) preroll.shift();
-    voicedFrames = rms > thr ? voicedFrames + 1 : 0;
-    if (voicedFrames >= 2) {
-      if (state === "agent" && player) { player.pause(); addMsg("sys", "вы перебили агента"); }
-      utter = preroll.slice(); preroll = []; speechMs = frameMs * utter.length; silenceMs = 0;
-      setState("speech", "Говорите…");
-    }
-    return;
-  }
-  utter.push(frame); speechMs += frameMs;
-  silenceMs = rms < thr * 0.6 ? silenceMs + frameMs : 0;
-  if (silenceMs >= END_SILENCE_MS || speechMs >= MAX_UTTERANCE_MS) {
-    const voiced = speechMs - silenceMs;
-    const chunks = utter; utter = []; voicedFrames = 0;
-    if (voiced < MIN_SPEECH_MS) { setState("listen", "Слушаю…"); return; }
-    ws.send(toWav(chunks));
+  const ev = vad.feed(frame, rms, frameMs, state === "agent" ? "agent" : "listen", performance.now());
+  if (!ev) return;
+  if (ev.type === "speech_start") {
+    if (ev.bargeIn && player) { player.pause(); bargedPlayer = player; addMsg("sys", "вы перебили агента"); }
+    setState("speech", "Говорите…");
+  } else if (ev.type === "noise") {
+    if (!resumeAgent()) setState("listen", "Слушаю… (шумно, подстроился)");
+  } else if (ev.type === "too_short") {
+    if (!resumeAgent()) setState("listen", "Слушаю…");
+  } else if (ev.type === "utterance") {
+    bargedPlayer = null;
+    ws.send(toWav(ev.chunks));
     setState("think", "Распознаю…");
   }
 }
@@ -152,6 +148,7 @@ function playAgentAudio(bytes) {
   const mime = pendingAudioFormat === "wav" ? "audio/wav" : "audio/ogg";
   player = new Audio(URL.createObjectURL(new Blob([bytes], { type: mime })));
   setState("agent", "Агент говорит… (можно перебить)");
+  vad.agentStarted(performance.now());
   player.onended = () => { if (state === "agent") setState("listen", "Слушаю…"); };
   player.play().catch(() => { if (state === "agent") setState("listen", "Слушаю… (браузер не дал включить звук)"); });
 }
@@ -192,6 +189,7 @@ async function startCall() {
   ws.onclose = () => stopCall(false);
   ws.onopen = () => {
     $("log").innerHTML = "";
+    vad.reset();
     if (stream) {
       ctx = new AudioContext();
       const src = ctx.createMediaStreamSource(stream);
@@ -228,6 +226,7 @@ $("callBtn").onclick = () => (state === "idle" ? startCall() : stopCall());
 $("typed").addEventListener("keydown", (e) => {
   if (e.key !== "Enter" || !e.target.value.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
   if (player) player.pause();
+  vad.reset();
   ws.send(JSON.stringify({ type:"text", text:e.target.value.trim() }));
   e.target.value = "";
   setState("think", "Агент думает…");

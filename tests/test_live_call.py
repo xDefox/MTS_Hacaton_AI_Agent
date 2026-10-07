@@ -52,6 +52,12 @@ def _receive_turn(ws) -> tuple[list[dict], bytes | None]:
             return events, None
 
 
+LONG_REPLY = (
+    "Сайт-визитка стоит от 40 000 рублей. Интернет-магазин — от 120 000 рублей. "
+    "Сроки от двух недель. Могу записать ваши пожелания для Ивана, он пришлёт смету."
+)
+
+
 def main() -> None:
     client = TestClient(app)
     page = client.get("/call")
@@ -68,7 +74,7 @@ def main() -> None:
         seen_histories.append(list(request.dialog_history or []))
         wants_human = "соедините" in request.user_message.lower()
         return CallResponse(
-            agent_response="Соединяю с Иваном." if wants_human else "Сайт-визитка от 40 000 рублей.",
+            agent_response="Соединяю с Иваном." if wants_human else LONG_REPLY,
             is_critical=wants_human,
             priority=Priority.critical if wants_human else Priority.normal,
             intent=Intent.escalation if wants_human else Intent.faq,
@@ -99,6 +105,7 @@ def main() -> None:
             check("фраза распознана", heard == "Сколько стоит сайт?", heard)
             check("ответ агента без повторного предупреждения", DISCLOSURE not in reply["text"].lower(), reply["text"])
             check("ответ озвучен", audio is not None)
+            check("ответ озвучен целиком, а не первые 2 фразы", tts_texts[1] == LONG_REPLY, tts_texts[1:2])
             check("в историю ушло приветствие", seen_histories[0][0]["text"] == greet, str(seen_histories[0][:1]))
 
             ws.send_bytes(_wav())
