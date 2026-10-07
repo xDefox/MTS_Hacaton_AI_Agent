@@ -34,14 +34,11 @@
   .tag.crit { color:var(--red); font-weight:600; }
   .typed { margin-top:12px; display:none; }
   .phone-row.hidden { display:none; }
-  .back { display:none; margin-bottom:10px; font-size:13px; }
-  .back a { color:var(--red); text-decoration:none; font-weight:600; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <div class="back" id="backRow"><a id="backLink" href="/">← В приложение</a></div>
     <h1>Живой звонок</h1>
     <div class="sub">МТС · Умный секретарь — говорите голосом, паузы определяются сами</div>
     <div class="row phone-row" id="phoneRow">
@@ -63,10 +60,6 @@ const params = new URLSearchParams(location.search);
 const API = (params.get("api") || "http://127.0.0.1:8000").replace(/\/$/, "");
 $("phone").value = params.get("phone") || localStorage.getItem("liveCallPhone") || "";
 if (params.get("phone")) $("phoneRow").classList.add("hidden");
-if (params.get("back")) {
-  $("backRow").style.display = "block";
-  $("backLink").href = params.get("back") || "/";
-}
 
 const TARGET_RATE = 16000;
 let ws = null, ctx = null, stream = null, proc = null, player = null;
@@ -149,10 +142,20 @@ function onFrame(e) {
   }
 }
 
+let listenWatch = null;
+function armListenFallback(ms) {
+  clearTimeout(listenWatch);
+  listenWatch = setTimeout(() => {
+    if (state === "think" || state === "agent") setState("listen", "Слушаю…");
+  }, ms);
+}
+
 function playAgentAudio(bytes) {
   if (state === "idle") return;
+  clearTimeout(listenWatch);
   if (player) player.pause();
-  const mime = pendingAudioFormat === "wav" ? "audio/wav" : "audio/ogg";
+  const mime = pendingAudioFormat === "wav" ? "audio/wav"
+    : pendingAudioFormat === "mp3" ? "audio/mpeg" : "audio/ogg";
   player = new Audio(URL.createObjectURL(new Blob([bytes], { type: mime })));
   setState("agent", "Агент говорит… (можно перебить)");
   vad.agentStarted(performance.now());
@@ -171,6 +174,9 @@ function onMessage(ev) {
   else if (m.type === "agent") {
     const tag = m.action ? (ACTION_LABELS[m.action] || m.action) + (m.is_critical ? " · важно" : "") : "";
     addMsg("agent", m.text, tag, m.is_critical);
+    // Не зависаем в think: ждём аудио, иначе снова слушаем (иначе 2-я реплика не уходит)
+    setState("agent", "Агент отвечает…");
+    armListenFallback(12000);
   } else if (m.type === "audio") pendingAudioFormat = m.format;
   else if (m.type === "audio_unavailable") setState("listen", "Слушаю… (голос агента недоступен)");
   else if (m.type === "transfer") addMsg("sys", "Уведомление о переводе отправлено");
@@ -208,7 +214,10 @@ async function startCall() {
       const src = ctx.createMediaStreamSource(stream);
       proc = ctx.createScriptProcessor(4096, 1, 1);
       proc.onaudioprocess = onFrame;
-      src.connect(proc); proc.connect(ctx.destination);
+      // gain=0: граф жив, но mic не орёт в динамики (иначе эхо → ложный barge-in / одна реплика)
+      const mute = ctx.createGain();
+      mute.gain.value = 0;
+      src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
     }
     callStart = Date.now();
     timerId = setInterval(() => {

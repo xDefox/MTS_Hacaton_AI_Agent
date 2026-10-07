@@ -107,7 +107,7 @@ async def synthesize_ogg(text: str, *, voice: str = "alena", lang: str = "ru-RU"
         "format": "oggopus",
     }
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=8.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=15.0)) as client:
             response = await client.post(
                 TTS_URL,
                 data=data,
@@ -118,8 +118,10 @@ async def synthesize_ogg(text: str, *, voice: str = "alena", lang: str = "ru-RU"
             "Нет доступа к Yandex SpeechKit (tts.api.cloud.yandex.net). "
             "Проверь интернет/VPN/firewall."
         ) from exc
+    except httpx.TimeoutException as exc:
+        raise SpeechKitError(f"SpeechKit TTS timeout: {exc}") from exc
     except httpx.HTTPError as exc:
-        raise SpeechKitError(f"SpeechKit TTS network error: {exc}") from exc
+        raise SpeechKitError(f"SpeechKit TTS network error: {type(exc).__name__}: {exc}") from exc
 
     if response.status_code >= 400:
         logger.error("SpeechKit TTS error %s: %s", response.status_code, response.text)

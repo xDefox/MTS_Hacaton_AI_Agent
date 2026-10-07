@@ -142,10 +142,20 @@ function onFrame(e) {
   }
 }
 
+let listenWatch = null;
+function armListenFallback(ms) {
+  clearTimeout(listenWatch);
+  listenWatch = setTimeout(() => {
+    if (state === "think" || state === "agent") setState("listen", "Слушаю…");
+  }, ms);
+}
+
 function playAgentAudio(bytes) {
   if (state === "idle") return;
+  clearTimeout(listenWatch);
   if (player) player.pause();
-  const mime = pendingAudioFormat === "wav" ? "audio/wav" : "audio/ogg";
+  const mime = pendingAudioFormat === "wav" ? "audio/wav"
+    : pendingAudioFormat === "mp3" ? "audio/mpeg" : "audio/ogg";
   player = new Audio(URL.createObjectURL(new Blob([bytes], { type: mime })));
   setState("agent", "Агент говорит… (можно перебить)");
   vad.agentStarted(performance.now());
@@ -164,6 +174,8 @@ function onMessage(ev) {
   else if (m.type === "agent") {
     const tag = m.action ? (ACTION_LABELS[m.action] || m.action) + (m.is_critical ? " · важно" : "") : "";
     addMsg("agent", m.text, tag, m.is_critical);
+    setState("agent", "Агент отвечает…");
+    armListenFallback(12000);
   } else if (m.type === "audio") pendingAudioFormat = m.format;
   else if (m.type === "audio_unavailable") setState("listen", "Слушаю… (голос агента недоступен)");
   else if (m.type === "transfer") addMsg("sys", "📲 Иван получил уведомление о переводе");
@@ -195,7 +207,9 @@ async function startCall() {
       const src = ctx.createMediaStreamSource(stream);
       proc = ctx.createScriptProcessor(4096, 1, 1);
       proc.onaudioprocess = onFrame;
-      src.connect(proc); proc.connect(ctx.destination);
+      const mute = ctx.createGain();
+      mute.gain.value = 0;
+      src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
     }
     callStart = Date.now();
     timerId = setInterval(() => {

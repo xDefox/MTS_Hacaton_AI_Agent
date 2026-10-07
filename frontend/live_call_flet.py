@@ -33,10 +33,17 @@ def _page_origin(page: ft.Page, flet_port: int) -> str:
     return f"http://{host}:{flet_port}"
 
 
-def embed_page_url(*, page: ft.Page, api_base: str, phone: str, flet_port: int) -> str:
+def embed_page_url(
+    *,
+    page: ft.Page,
+    api_base: str,
+    phone: str,
+    flet_port: int,
+) -> str:
     api = (api_base or "http://127.0.0.1:8000").rstrip("/")
     digits = normalize_phone(phone)
-    q = f"phone={quote(digits)}&api={quote(api)}&back={quote('/')}"
+    # v= — cache-bust assets после правок mute/TTS/UI
+    q = f"phone={quote(digits)}&api={quote(api)}&v=3"
     return f"{_page_origin(page, flet_port)}/live_call_embed.html?{q}"
 
 
@@ -61,22 +68,15 @@ class LiveCallController:
 
         self.line_label = ft.Text("", size=12, color=colors["gray"])
         self.hint = ft.Text(
-            "Живой диалог: слушаю → думаю → отвечаю голосом. Паузы и перебивание — как на /call.",
+            "Живой диалог прямо во вкладке: слушаю → думаю → отвечаю голосом. "
+            "Нажмите «Позвонить» в панели ниже.",
             size=12,
             color=colors["gray"],
         )
         self.status = ft.Text(
-            "Нажмите «Позвонить голосом», разрешите микрофон и говорите.",
+            "Разрешите микрофон в панели и говорите — диалог многоходовый.",
             size=13,
             color=colors["dark"],
-        )
-        self.start_btn = ft.FilledButton(
-            "Позвонить голосом",
-            icon=ft.Icons.PHONE_IN_TALK,
-            bgcolor=colors["red"],
-            color=colors["white"],
-            height=48,
-            on_click=self._open_fullscreen,
         )
         self._host = ft.Container(
             expand=True,
@@ -105,7 +105,7 @@ class LiveCallController:
         logger.warning("live embed error: %s", data)
         self.status.value = (
             f"Ошибка загрузки голосового UI: {data}. "
-            "Попробуйте «На весь экран»."
+            "Нажмите «Обновить панель»."
         )
         try:
             self.page.update()
@@ -121,11 +121,6 @@ class LiveCallController:
                         color=self.colors["red"],
                     ),
                     ft.Text("pip install flet-webview==0.86.5", size=12, color=self.colors["gray"]),
-                    ft.FilledButton(
-                        "Открыть голосовой звонок",
-                        icon=ft.Icons.PHONE_IN_TALK,
-                        on_click=self._open_fullscreen,
-                    ),
                 ],
                 spacing=8,
             )
@@ -136,25 +131,6 @@ class LiveCallController:
             on_page_started=lambda e: logger.info("live embed loading"),
             on_web_resource_error=lambda e: self._on_err(getattr(e, "data", e)),
         )
-
-    def _open_fullscreen(self, _=None) -> None:
-        """Тот же UI на same-origin (микрофон надёжнее, чем в iframe WebView)."""
-        url = self._url()
-        try:
-            # В браузере — эта же вкладка: полный mic+VAD+TTS как /call.
-            if getattr(self.page, "web", False):
-                self.page.launch_url(
-                    url,
-                    web_popup_window_name=ft.UrlTarget.SELF,
-                )
-            else:
-                self.page.launch_url(url)
-        except Exception as exc:
-            self.status.value = f"Не удалось открыть: {exc}"
-            try:
-                self.page.update()
-            except Exception:
-                pass
 
     def build(self) -> ft.Control:
         self._host.content = self._make_webview()
@@ -169,7 +145,6 @@ class LiveCallController:
                 self.hint,
                 self.line_label,
                 self.status,
-                self.start_btn,
                 ft.Row([self.reload_btn], spacing=8),
                 self._host,
             ],

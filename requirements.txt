@@ -19,6 +19,7 @@ av>=10.0.0
 # Запасной локальный STT / TTS, если Yandex недоступен по сети
 faster-whisper>=1.0.0
 pyttsx3>=2.90
+edge-tts>=6.1.0  # живой RU-голос, если SpeechKit TTS недоступен с сети
 comtypes>=1.4.0; platform_system=="Windows"
 pypiwin32>=223; platform_system=="Windows"
 

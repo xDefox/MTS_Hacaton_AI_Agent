@@ -37,8 +37,8 @@ VAD_PATH = STATIC_DIR / "live_vad.js"
 DEFAULT_GREETING = "Здравствуйте! Компания Ивана Петрова, слушаю вас."
 NOT_HEARD_REPLY = "Простите, не расслышал. Повторите, пожалуйста."
 HISTORY_LIMIT = 12
-# В живом разговоре паузу дольше пары секунд не ждём: лучше локальный голос, чем тишина
-YANDEX_TTS_TIMEOUT_S = 6.0
+# SpeechKit: быстрый fail → edge-tts (SvetlanaNeural). Раньше 6с → pyttsx3-робот.
+YANDEX_TTS_TIMEOUT_S = 8.0
 SPOKEN_MAX_CHARS = 900
 _GREETING_AUDIO_CACHE_LIMIT = 32
 _greeting_audio: dict[str, tuple[bytes, str, str]] = {}
@@ -91,7 +91,7 @@ async def _say(
             logger.warning("Live call TTS failed: %s", exc)
             await ws.send_json({"type": "audio_unavailable"})
             return
-        if cache and voiced[2] == "yandex-speechkit":
+        if cache and voiced[2] in {"yandex-speechkit", "edge-tts"}:
             if len(_greeting_audio) >= _GREETING_AUDIO_CACHE_LIMIT:
                 _greeting_audio.pop(next(iter(_greeting_audio)))
             _greeting_audio[phrase] = voiced

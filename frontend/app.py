@@ -81,11 +81,12 @@ from .assests import (
 
 CARD_SIZE = 280            # карточка на десктопе
 MOBILE_BREAKPOINT = 640    # ниже — маленький экран (телефон)
-# На телефоне 127.0.0.1 — сам телефон; для APK задайте API_BASE / DEMO_API_URL (tunnel).
+# Локально всегда :8000. Tunnel (DEMO_WEB_URL) — только для QR/телефона, не для Flet на ПК:
+# иначе мёртвый cloudflare URL даёт «API недоступен» при живом uvicorn.
+# APK/телефон: задайте API_BASE или DEMO_API_URL явно.
 API_BASE = (
     os.getenv("API_BASE")
     or os.getenv("DEMO_API_URL")
-    or os.getenv("DEMO_WEB_URL")
     or "http://127.0.0.1:8000"
 ).rstrip("/")
 MOBILE_PLATFORMS = {

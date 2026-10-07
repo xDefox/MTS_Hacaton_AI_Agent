@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 # SAPI-движок pyttsx3 живёт в COM-потоке, где создан: из другого потока runAndWait зависает
 _LOCAL_TTS_THREAD = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-tts")
+# Если SpeechKit TTS из сети недоступен — не ждём таймаут на каждой реплике
+_yandex_tts_disabled = False
 
 
 class SpeechError(RuntimeError):
@@ -127,25 +129,39 @@ async def transcribe_bytes(
 async def synthesize_agent_audio(
     text: str, *, yandex_timeout: float | None = None
 ) -> tuple[bytes, str, str]:
-    """Returns (audio_bytes, ext ogg|wav, engine_name).
+    """Returns (audio_bytes, ext ogg|mp3|wav, engine_name).
 
-    yandex_timeout — сколько ждать SpeechKit, прежде чем перейти на локальный голос.
+    Порядок: SpeechKit → edge-tts (живой голос) → pyttsx3 (робот).
     """
+    global _yandex_tts_disabled
     settings = get_settings()
     provider = (settings.tts_provider or "local").strip().lower()
-    if provider == "yandex":
-        from backend.services.speechkit_stt import SpeechKitError, synthesize_ogg
+    if provider == "yandex" and not _yandex_tts_disabled:
+        from backend.services.speechkit_stt import synthesize_ogg
 
         try:
             audio = await asyncio.wait_for(
                 synthesize_ogg(text, voice=settings.tts_voice, lang=settings.tts_lang),
-                timeout=yandex_timeout,
+                timeout=yandex_timeout if yandex_timeout is not None else 8.0,
             )
             return audio, "ogg", "yandex-speechkit"
         except asyncio.TimeoutError:
-            logger.warning("SpeechKit TTS timeout after %ss, fallback to local", yandex_timeout)
-        except Exception as exc:  # noqa: BLE001 — SpeechKit недоступен → локальный голос
-            logger.warning("SpeechKit TTS failed, fallback to local: %s", exc)
+            _yandex_tts_disabled = True
+            logger.warning(
+                "SpeechKit TTS timeout after %ss — дальше edge-tts без ожидания Yandex",
+                yandex_timeout,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _yandex_tts_disabled = True
+            logger.warning("SpeechKit TTS failed (%s) — дальше edge-tts", exc)
+
+    try:
+        from backend.services.edge_tts_synth import synthesize_mp3
+
+        audio = await asyncio.wait_for(synthesize_mp3(text), timeout=20.0)
+        return audio, "mp3", "edge-tts"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("edge-tts failed, fallback to pyttsx3: %s", exc)
 
     from backend.services.local_tts import LocalTTSError, synthesize_wav_local
 
