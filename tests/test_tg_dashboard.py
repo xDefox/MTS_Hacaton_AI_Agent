@@ -51,9 +51,19 @@ def test_format_stats_and_detail():
         }
     )
     assert "Дашборд" in stats
-    assert "Важные: <b>3</b>" in stats
+    assert "Важные" in stats and "<b>3</b>" in stats
     assert "Коммерция" in stats
     assert "Перезвонить" in stats
+    with_phone = format_stats(
+        {
+            "total": 0,
+            "critical": 0,
+            "routine": 0,
+            "critical_share": 0,
+        },
+        phone="79001112233",
+    )
+    assert "7900" in with_phone or "+7" in with_phone
 
     detail = format_detail(
         {
@@ -93,7 +103,7 @@ def test_format_stats_and_detail():
     )
     assert "приложении МТС" in text
     assert "только важные" in text
-    assert "Шаблоны: выкл" in text
+    assert "Шаблоны · выкл" in text
 
 
 def test_demo_greeting_and_call_turn():

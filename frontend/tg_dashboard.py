@@ -14,10 +14,10 @@ from aiogram.types import (
 
 from backend.services.telegram_notify import format_phone
 
-BTN_DASH = "Дашборд"
-BTN_ALL = "Все звонки"
-BTN_CRIT = "Важные"
-BTN_SET = "Настройки"
+BTN_DASH = "📊 Дашборд"
+BTN_ALL = "📋 Все звонки"
+BTN_CRIT = "⚠️ Важные"
+BTN_SET = "⚙️ Настройки"
 BTN_CALL = "📞 Начать звонок"
 BTN_HANGUP = "⏹ Завершить звонок"
 
@@ -62,6 +62,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_CRIT), KeyboardButton(text=BTN_SET)],
         ],
         resize_keyboard=True,
+        input_field_placeholder="МТС · умный секретарь",
     )
 
 
@@ -70,6 +71,22 @@ def call_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_HANGUP)]],
         resize_keyboard=True,
+        input_field_placeholder="Голос или текст абонента…",
+    )
+
+
+def dashboard_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📋 Все", callback_data="hist:all"),
+                InlineKeyboardButton(text="⚠️ Важные", callback_data="hist:crit"),
+            ],
+            [
+                InlineKeyboardButton(text="⚙️ Настройки", callback_data="set"),
+                InlineKeyboardButton(text="🔄 Обновить", callback_data="dash"),
+            ],
+        ]
     )
 
 
@@ -102,10 +119,13 @@ def format_call_turn(payload: dict) -> str:
     action = _action(payload.get("action_required"))
     lines = [
         f"{flag} <b>Реплика #{cid}</b>",
-        f"Вы: {transcript or '—'}",
-        f"Агент: {reply}",
-        f"Резюме: {summary}",
-        f"Действие: {action}",
+        "",
+        f"<b>Вы</b>\n{transcript or '—'}",
+        "",
+        f"<b>Агент</b>\n{reply}",
+        "",
+        f"<b>Резюме</b> · {summary}",
+        f"<b>Действие</b> · {action}",
     ]
     return "\n".join(lines)
 
@@ -114,7 +134,7 @@ def history_keyboard(items: list[dict], *, critical: bool) -> InlineKeyboardMark
     rows = [
         [
             InlineKeyboardButton(
-                text=f"{'⚠️' if item.get('is_critical') else '•'} #{item.get('id')} открыть",
+                text=f"{'⚠️' if item.get('is_critical') else '•'} #{item.get('id')} · открыть",
                 callback_data=f"call:{item.get('id')}",
             )
         ]
@@ -123,9 +143,9 @@ def history_keyboard(items: list[dict], *, critical: bool) -> InlineKeyboardMark
     ]
     rows.append(
         [
-            InlineKeyboardButton(text="Все", callback_data="hist:all"),
-            InlineKeyboardButton(text="Важные", callback_data="hist:crit"),
-            InlineKeyboardButton(text="Дашборд", callback_data="dash"),
+            InlineKeyboardButton(text="📋 Все", callback_data="hist:all"),
+            InlineKeyboardButton(text="⚠️ Важные", callback_data="hist:crit"),
+            InlineKeyboardButton(text="📊 Дашборд", callback_data="dash"),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -135,10 +155,10 @@ def settings_keyboard() -> InlineKeyboardMarkup:
     """Настройки меняются во фронте — в боте только просмотр."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Дашборд", callback_data="dash")],
+            [InlineKeyboardButton(text="📊 Дашборд", callback_data="dash")],
             [
-                InlineKeyboardButton(text="Все", callback_data="hist:all"),
-                InlineKeyboardButton(text="Важные", callback_data="hist:crit"),
+                InlineKeyboardButton(text="📋 Все", callback_data="hist:all"),
+                InlineKeyboardButton(text="⚠️ Важные", callback_data="hist:crit"),
             ],
         ]
     )
@@ -167,12 +187,24 @@ def _action(raw) -> str:
     return ACTION_RU.get(key, key or "—")
 
 
+def _bar(count: int, total: int, width: int = 8) -> str:
+    if total <= 0:
+        return "·" * width
+    filled = max(0, min(width, round(width * count / total)))
+    return "▓" * filled + "░" * (width - filled)
+
+
 def format_history(items: list[dict], *, critical: bool, total: int) -> str:
     title = "⚠️ Важные звонки" if critical else "📋 Все звонки"
     if not items:
         empty = "Важных обращений пока нет." if critical else "История пуста — звонков ещё не было."
         return f"<b>{title}</b>\n\n{empty}"
-    lines = [f"<b>{title}</b>", f"Показано {len(items)} из {total}", ""]
+    lines = [
+        f"<b>{title}</b>",
+        f"<i>Показано {len(items)} из {total}</i>",
+        "────────────",
+        "",
+    ]
     for item in items:
         flag = "⚠️" if item.get("is_critical") else "•"
         cid = item.get("id") or "—"
@@ -183,7 +215,7 @@ def format_history(items: list[dict], *, critical: bool, total: int) -> str:
             head += f" · {who}"
         lines.append(head)
         lines.append(
-            f"{_when(item.get('created_at'))} · {_intent(item.get('intent'))} · "
+            f"<i>{_when(item.get('created_at'))}</i> · {_intent(item.get('intent'))} · "
             f"{PRIORITY_RU.get(str(item.get('priority') or ''), str(item.get('priority') or '—'))}"
         )
         lines.append(html.escape(_clip(str(item.get("summary") or "—"))))
@@ -201,13 +233,14 @@ def format_detail(item: dict) -> str:
     outbound = item.get("output") or item.get("agent_response") or "—"
     lines = [
         f"<b>{flag} #{item.get('id')}</b>",
-        f"Когда: {_when(item.get('created_at'))}",
-        f"Линия: {line} · {direction}",
-        f"Кто: {who}",
-        f"Звонящий: {caller}",
-        f"Намерение: {_intent(item.get('intent'))}",
-        f"Приоритет: {PRIORITY_RU.get(str(item.get('priority') or ''), '—')}",
-        f"Действие: {_action(item.get('action_required'))}",
+        "────────────",
+        f"<b>Когда</b> · {_when(item.get('created_at'))}",
+        f"<b>Линия</b> · {line} · {direction}",
+        f"<b>Кто</b> · {who}",
+        f"<b>Звонящий</b> · {caller}",
+        f"<b>Намерение</b> · {_intent(item.get('intent'))}",
+        f"<b>Приоритет</b> · {PRIORITY_RU.get(str(item.get('priority') or ''), '—')}",
+        f"<b>Действие</b> · {_action(item.get('action_required'))}",
         "",
         "<b>Резюме</b>",
         html.escape(str(item.get("summary") or "—")),
@@ -224,31 +257,46 @@ def format_detail(item: dict) -> str:
     return "\n".join(lines)
 
 
-def format_stats(stats: dict) -> str:
+def format_stats(stats: dict, *, phone: str = "") -> str:
     total = int(stats.get("total") or 0)
     critical = int(stats.get("critical") or 0)
     routine = int(stats.get("routine") or 0)
     share = stats.get("critical_share") or 0
+    line = html.escape(format_phone(phone)) if phone else "—"
     lines = [
         "<b>📊 МТС · Дашборд линии</b>",
-        "",
-        f"Всего карточек: <b>{total}</b>",
-        f"Важные: <b>{critical}</b> ({share}%)",
-        f"Рутина: {routine}",
+        f"Линия: <b>{line}</b>",
+        "────────────",
+        f"<b>Всего</b>     {total}",
+        f"<b>Важные</b>   {critical}  ·  {share}%",
+        f"<b>Рутина</b>   {routine}",
     ]
     if total:
-        lines += ["", "<b>По намерениям</b>"]
-        for key, count in (stats.get("by_intent") or {}).items():
-            lines.append(f"· {_intent(key)} — {count}")
-        lines += ["", "<b>Что делать</b>"]
-        for key, count in (stats.get("by_action") or {}).items():
-            lines.append(f"· {_action(key)} — {count}")
-        lines += ["", "<b>Приоритет</b>"]
-        for key, count in (stats.get("by_priority") or {}).items():
-            label = PRIORITY_RU.get(str(key), str(key))
-            lines.append(f"· {label} — {count}")
+        intents = list((stats.get("by_intent") or {}).items())
+        if intents:
+            lines += ["", "<b>Намерения</b>"]
+            for key, count in intents[:8]:
+                n = int(count)
+                lines.append(f"{_bar(n, total)}  {_intent(key)} · <b>{n}</b>")
+        actions = list((stats.get("by_action") or {}).items())
+        if actions:
+            lines += ["", "<b>Что делать</b>"]
+            for key, count in actions[:6]:
+                n = int(count)
+                lines.append(f"{_bar(n, total)}  {_action(key)} · <b>{n}</b>")
+        prios = list((stats.get("by_priority") or {}).items())
+        if prios:
+            lines += ["", "<b>Приоритет</b>"]
+            for key, count in prios[:6]:
+                n = int(count)
+                label = PRIORITY_RU.get(str(key), str(key))
+                lines.append(f"{_bar(n, total)}  {label} · <b>{n}</b>")
     else:
-        lines += ["", "Пока нет звонков — дашборд заполнится после process_call."]
+        lines += [
+            "",
+            "Пока нет звонков.",
+            "Нажмите «Начать звонок» — карточки появятся здесь.",
+        ]
     return "\n".join(lines)
 
 
@@ -269,14 +317,15 @@ def format_settings(phone: str, prefs: dict) -> str:
         if greet:
             tpl = f"\nПриветствие: {html.escape(greet[:120])}{'…' if len(greet) > 120 else ''}"
     return (
-        "<b>⚙️ Настройки услуги</b>\n"
-        f"Линия: {html.escape(phone)}\n\n"
-        f"Способ ответа: {routing}\n"
-        f"История и саммари: {on('history')}\n"
-        f"Шаблоны: {on('scenarios')}{tpl}\n"
-        f"Пуши: {notify}\n"
-        f"Режим: {mode}\n\n"
-        "Меняются в приложении МТС. Бот только читает — подключать его необязательно."
+        "<b>⚙️ Настройки линии</b>\n"
+        f"Линия: <b>{html.escape(phone)}</b>\n"
+        "────────────\n"
+        f"Способ ответа · {routing}\n"
+        f"История и саммари · {on('history')}\n"
+        f"Шаблоны · {on('scenarios')}{tpl}\n"
+        f"Пуши · {notify}\n"
+        f"Режим · {mode}\n\n"
+        "<i>Меняются в приложении МТС. Бот только показывает состояние.</i>"
     )
 
 

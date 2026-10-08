@@ -1,10 +1,18 @@
 """Telegram-бот Ивана: дашборд, история, настройки + эмуляция звонка."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
+import sys
 import time
 from pathlib import Path
+
+# python frontend/tg_bot.py и python -m frontend.tg_bot — оба из корня репо
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 import httpx
 from aiogram import Bot, Dispatcher, F, types
@@ -43,6 +51,7 @@ from frontend.tg_dashboard import (
     BTN_HANGUP,
     BTN_SET,
     call_keyboard,
+    dashboard_keyboard,
     format_detail,
     format_history,
     format_settings,
@@ -74,15 +83,30 @@ _LOCKED_HINT = (
 
 _WELCOME_BOUND = (
     "<b>МТС · Умный секретарь</b>\n"
-    "Линия: {phone}\n\n"
+    "Линия: <b>{phone}</b>\n"
+    "────────────\n"
     "Доступны дашборд, история и демо входящего звонка.\n"
     "Настройки линии — в приложении МТС."
 )
 
-_CONFIRM_BIND = (
+_CONFIRM_BIND_NEW = (
     "<b>МТС · Умный секретарь</b>\n\n"
-    "Подтвердите привязку канала уведомлений\n"
-    "к линии <b>{phone}</b>."
+    "Подключить уведомления к линии\n"
+    "<b>{phone}</b>?"
+)
+
+_CONFIRM_BIND_SAME = (
+    "<b>МТС · Умный секретарь</b>\n\n"
+    "Эта линия уже привязана к чату:\n"
+    "<b>{phone}</b>\n\n"
+    "Продолжить доступ или перепривязать заново?"
+)
+
+_CONFIRM_BIND_SWITCH = (
+    "<b>МТС · Умный секретарь</b>\n\n"
+    "Сейчас в этом чате линия <b>{current}</b>.\n"
+    "Ссылка из приложения — на <b>{target}</b>.\n\n"
+    "Перевязать чат на новую линию или оставить текущую?"
 )
 
 
@@ -91,18 +115,49 @@ def _display_phone(chat_id: int) -> str:
     return format_phone(phone) if phone else "—"
 
 
-def _bind_confirm_kb(token: str) -> InlineKeyboardMarkup:
-    """callback только с токеном — номер не доверяем из кнопки."""
-    payload = f"bind:yes:{token}"
+def _bind_new_kb(token: str) -> InlineKeyboardMarkup:
+    """Первичная привязка: только токен в callback (номер не доверяем)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Да, привязать",
-                    callback_data=payload[:64],
+                    text="✅ Подключить",
+                    callback_data=f"bind:yes:{token}"[:64],
                 ),
-                InlineKeyboardButton(text="Нет", callback_data="bind:no"),
+                InlineKeyboardButton(text="Отмена", callback_data="bind:no"),
             ]
+        ]
+    )
+
+
+def _bind_same_kb(token: str) -> InlineKeyboardMarkup:
+    """Уже на этой линии: продолжить или перепривязать."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="▶️ Продолжить доступ", callback_data="bind:stay")],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Перепривязать",
+                    callback_data=f"bind:yes:{token}"[:64],
+                ),
+                InlineKeyboardButton(text="Отмена", callback_data="bind:no"),
+            ],
+        ]
+    )
+
+
+def _bind_switch_kb(token: str) -> InlineKeyboardMarkup:
+    """Другая линия в ссылке: перевязать или оставить текущую."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔀 Перевязать на новую",
+                    callback_data=f"bind:yes:{token}"[:64],
+                )
+            ],
+            [InlineKeyboardButton(text="✅ Оставить текущую", callback_data="bind:stay")],
+            [InlineKeyboardButton(text="Отмена", callback_data="bind:no")],
         ]
     )
 
@@ -225,8 +280,12 @@ async def _send_stats(message: types.Message) -> None:
         await message.answer("Дашборд недоступен: бэкенд не ответил.")
         return
     await message.answer(
-        format_stats(resp.json()),
+        format_stats(resp.json(), phone=phone),
         parse_mode="HTML",
+        reply_markup=dashboard_keyboard(),
+    )
+    await message.answer(
+        "Выберите раздел ниже или в меню.",
         reply_markup=main_keyboard(),
     )
 
@@ -343,10 +402,29 @@ async def cmd_start(message: types.Message, command: CommandObject):
                 reply_markup=main_keyboard(),
             )
             return
+        # Уже на этой линии → продолжить или перепривязать.
+        if bound and bound == phone:
+            await message.answer(
+                _CONFIRM_BIND_SAME.format(phone=format_phone(phone)),
+                parse_mode="HTML",
+                reply_markup=_bind_same_kb(raw),
+            )
+            return
+        # Другая линия в этом чате → перевязать или оставить.
+        if bound and bound != phone:
+            await message.answer(
+                _CONFIRM_BIND_SWITCH.format(
+                    current=format_phone(bound),
+                    target=format_phone(phone),
+                ),
+                parse_mode="HTML",
+                reply_markup=_bind_switch_kb(raw),
+            )
+            return
         await message.answer(
-            _CONFIRM_BIND.format(phone=format_phone(phone)),
+            _CONFIRM_BIND_NEW.format(phone=format_phone(phone)),
             parse_mode="HTML",
-            reply_markup=_bind_confirm_kb(raw),
+            reply_markup=_bind_new_kb(raw),
         )
         return
 
@@ -374,7 +452,21 @@ async def on_bind_confirm(callback: CallbackQuery):
             reply_markup=main_keyboard(),
         )
         return
-    # bind:yes:<token>
+    if data == "bind:stay":
+        await callback.answer("Ок")
+        phone = phone_for_chat(callback.message.chat.id)
+        if phone:
+            await callback.message.answer(
+                _WELCOME_BOUND.format(phone=format_phone(phone)),
+                parse_mode="HTML",
+                reply_markup=main_keyboard(),
+            )
+        else:
+            await callback.message.answer(
+                _LOCKED_HINT, parse_mode="HTML", reply_markup=main_keyboard()
+            )
+        return
+    # bind:yes:<token> — первичная привязка или перевязка
     parts = data.split(":", 2)
     if len(parts) < 3 or parts[1] != "yes":
         await callback.answer("Некорректно")
@@ -545,6 +637,13 @@ async def cb_dash(query: CallbackQuery):
     await query.answer()
     if query.message:
         await _send_stats(query.message)
+
+
+@dp.callback_query(F.data == "set")
+async def cb_settings(query: CallbackQuery):
+    await query.answer()
+    if query.message:
+        await _send_settings(query.message)
 
 
 @dp.callback_query(F.data == "hist:all")
