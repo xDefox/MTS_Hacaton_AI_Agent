@@ -9,6 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = sys.executable
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 SUITE = [
     "tests/test_routing_matrix.py",
@@ -24,7 +26,14 @@ SUITE = [
 ]
 
 
+def _bootstrap_db() -> None:
+    from backend.database import init_db
+
+    init_db()
+
+
 def main() -> None:
+    _bootstrap_db()
     failed = 0
     print(f"Offline suite ({len(SUITE)} runners)\n")
     for rel in SUITE:

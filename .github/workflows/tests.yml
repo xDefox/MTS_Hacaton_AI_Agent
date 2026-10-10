@@ -1,0 +1,30 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  offline-suite:
+    runs-on: ubuntu-latest
+    env:
+      YC_FOLDER_ID: offline-test
+      YC_API_KEY: offline-test
+      LLM_PROVIDER: yandex
+      STT_PROVIDER: yandex
+      TTS_PROVIDER: yandex
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run offline suite
+        run: python tests/run_offline_suite.py
