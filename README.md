@@ -1,5 +1,7 @@
 # МТС × Space Acc — Трек 1: ИИ-секретарь входящих звонков
 
+[![Tests](https://github.com/xDefox/MTS_Hacaton_AI_Agent/actions/workflows/tests.yml/badge.svg)](https://github.com/xDefox/MTS_Hacaton_AI_Agent/actions/workflows/tests.yml)
+
 Секретарь на линии для Ивана Петрова (малый IT-бизнес): поднимает трубку, понимает суть, отвечает голосом или ведёт в чат, пушит важное в Telegram, даёт историю и сценарии в «приложении МТС».
 
 Подробная теория для защиты: [`docs/project_brief.md`](docs/project_brief.md)  
